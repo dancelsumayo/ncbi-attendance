@@ -26,7 +26,7 @@ const DB = (() => {
 
   const toProgram = r => ({
     id: r.id, name: r.name, date: r.date, type: r.type,
-    lateAfter: r.late_after, status: r.status, venue: r.venue
+    lateAfter: r.late_after, status: r.status, venue: r.venue, scanning: Boolean(r.scanning)
   });
 
   return {
@@ -72,6 +72,37 @@ const DB = (() => {
         { name: p.name, date: p.date, type: p.type, late_after: p.lateAfter, status: p.status },
         "return=representation");
       return toProgram(row);
+    },
+
+    async addStudent(st) {
+      if (!on) return { ...st, id: students.length + 1 };
+      const [row] = await req("students", "POST", st, "return=representation");
+      return row;
+    },
+
+    async removeAttendance(pid, sid) {
+      if (on) await req(`attendance?program_id=eq.${pid}&student_id=eq.${sid}`, "DELETE");
+    },
+
+    // Checked against the database on every scan by an SBO officer.
+    // Returns null if the officer may scan, otherwise the reason they may not.
+    async scanAccess(pid, officerId) {
+      let p, st, a;
+      if (on) {
+        [p] = await req(`programs?id=eq.${pid}&select=status,scanning`);
+        [st] = await req(`students?id=eq.${officerId}&select=active,checker`);
+        [a] = await req(`attendance?program_id=eq.${pid}&student_id=eq.${officerId}&select=time_in,time_out`);
+      } else {
+        p = programs.find(x => x.id == pid);
+        st = students.find(x => x.id === officerId);
+        a = (att[pid] || {})[officerId];
+        a = a && { time_in: a.in, time_out: a.out };
+      }
+      if (!st || !st.active || !st.checker) return "Your SBO officer access was removed. Ask the administrator.";
+      if (!p || p.status !== "Ongoing") return "This program is not accepting attendance.";
+      if (!p.scanning) return "Scanning is turned off for this program.";
+      if (!a || !a.time_in || a.time_out) return "You must be marked present at this program before you can scan.";
+      return null;
     },
 
     async setProgram(id, fields) { if (on) await req(`programs?id=eq.${id}`, "PATCH", fields); },
