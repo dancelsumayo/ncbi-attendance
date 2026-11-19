@@ -1,0 +1,277 @@
+/* ==========================================================
+   NCBI Program Attendance - styles
+   Palette (only these five colors are used):
+     #3c0120  plum       #3a0912  wine
+     #b02c12  red        #dcb57c  gold
+     #ffffff  white
+   ========================================================== */
+
+/* ---------- Design tokens ---------- */
+:root {
+  --plum: #3c0120;
+  --wine: #3a0912;
+  --red: #b02c12;
+  --gold: #dcb57c;
+  --white: #ffffff;
+
+  --bg: var(--white);
+  --card: var(--white);
+  --ink: var(--wine);
+  --mute: rgba(58, 9, 18, 0.72);
+  --line: rgba(220, 181, 124, 0.6);
+
+  color-scheme: light;
+  box-sizing: border-box;
+  /* keep content clear of phone system bars */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---------- Base ---------- */
+* { box-sizing: border-box; }
+
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 15px/1.5 Figtree, system-ui, sans-serif;
+}
+
+h1, h2, h3 {
+  margin: 0;
+  font-family: 'Bricolage Grotesque', Figtree, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.hide { display: none !important; }
+
+:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+/* ---------- App layout ---------- */
+.app {
+  display: grid;
+  grid-template-columns: 230px 1fr;
+  min-height: 100vh;
+}
+
+main {
+  width: 100%;
+  max-width: 1100px;
+  padding: 26px 30px;
+}
+
+main > h1 { font-size: 28px; margin-bottom: 4px; }
+
+.sub { color: var(--mute); margin: 0 0 20px; }
+
+/* ---------- Sidebar ---------- */
+aside {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 14px;
+  background: linear-gradient(180deg, var(--plum), var(--wine));
+  color: var(--white);
+}
+
+.brand {
+  margin-bottom: 8px;
+  padding: 4px 8px 16px;
+  border-bottom: 1px solid rgba(220, 181, 124, 0.35);
+}
+.brand b { display: block; font: 700 18px 'Bricolage Grotesque'; }
+.brand span { font-size: 12px; color: var(--gold); }
+
+aside button {
+  all: unset;
+  cursor: pointer;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-weight: 500;
+  color: var(--white);
+}
+aside button:hover { background: rgba(220, 181, 124, 0.2); }
+aside button.on { background: var(--gold); color: var(--plum); }
+aside button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.role {
+  margin-top: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--gold);
+}
+.role b { color: var(--white); font-size: 13px; }
+
+/* ---------- Cards and stats ---------- */
+.grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-bottom: 20px;
+}
+
+.stat,
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.stat { padding: 14px; }
+.stat b { display: block; font: 700 28px 'Bricolage Grotesque'; color: var(--red); }
+.stat span { color: var(--mute); font-size: 13px; }
+
+.panel { padding: 18px; margin-bottom: 18px; }
+.panel h2 { font-size: 18px; margin-bottom: 12px; }
+
+/* ---------- Tables ---------- */
+.tablewrap { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; }
+
+th, td {
+  padding: 9px 8px;
+  text-align: left;
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+th { color: var(--mute); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+
+/* ---------- Status tags ---------- */
+.tag {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 99px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+}
+.Present, .Ongoing   { background: var(--gold); color: var(--plum); }
+.Late, .Upcoming     { background: var(--white); color: var(--red); border-color: var(--red); }
+.Absent, .Cancelled  { background: var(--red); color: var(--white); }
+.Completed           { background: var(--plum); color: var(--gold); }
+
+/* ---------- Forms and buttons ---------- */
+input, select {
+  min-width: 0;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--white);
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.btn {
+  padding: 9px 16px;
+  font: 600 14px Figtree;
+  color: var(--white);
+  background: var(--red);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn:hover { background: var(--plum); }
+.btn.alt { color: var(--wine); background: transparent; border: 1px solid var(--gold); }
+.btn.alt:hover { background: var(--gold); }
+
+/* ---------- QR scanner ---------- */
+.scan { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+
+.result {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 230px;
+  padding: 22px;
+  border-radius: 12px;
+  border: 2px solid var(--gold);
+  background: var(--white);
+  transition: background 0.2s;
+}
+.result h3 { font-size: 26px; }
+.result p { margin: 4px 0; }
+.result .big { font: 700 14px Figtree; color: var(--mute); }
+
+.result.ok   { background: var(--gold); color: var(--plum); border-color: var(--gold); }
+.result.late { background: var(--white); color: var(--red); border-color: var(--red); }
+.result.bad  { background: var(--red); color: var(--white); border-color: var(--red); }
+.result.ok .big, .result.bad .big { color: inherit; }
+
+/* ---------- Camera preview ---------- */
+#reader { width: 100%; max-width: 360px; margin: 0 auto 12px; overflow: hidden; border-radius: 10px; border: 2px solid var(--gold); }
+
+/* ---------- Student QR and progress bar ---------- */
+.qrbox {
+  display: grid;
+  place-items: center;
+  width: fit-content;
+  margin: 0 auto 12px;
+  padding: 16px;
+  background: var(--white);
+  border: 2px solid var(--gold);
+  border-radius: 12px;
+}
+
+.bar { height: 10px; border-radius: 9px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--red); }
+
+/* ---------- Login page ---------- */
+#login {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  background: linear-gradient(160deg, var(--plum), var(--wine));
+}
+
+.lbox {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(400px, 100%);
+  padding: 28px;
+  background: var(--white);
+  border-radius: 14px;
+  border-top: 6px solid var(--gold);
+}
+.lbox h1 { font-size: 24px; }
+.lbox .sub { margin: 0; }
+.lbox input { width: 100%; }
+
+.lerr { min-height: 1.3em; margin: 0; font-size: 14px; color: var(--red); }
+.demo { font-size: 13px; color: var(--mute); }
+.demo p { margin: 6px 0 0; }
+
+/* ---------- Small screens ---------- */
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  aside { flex-direction: row; flex-wrap: wrap; padding: 10px; }
+  .brand { display: none; }
+  .role { width: 100%; }
+  main { padding: 18px 14px; }
+  .scan { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

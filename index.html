@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>NCBI Program Attendance</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- Login page: shown first -->
+  <div id="login">
+    <form id="lf" class="lbox">
+      <h1>North Coast Bohol Institute</h1>
+      <p class="sub">Sign in to the program attendance system.</p>
+
+      <label>Student number or username
+        <input id="lu" autocomplete="username" required>
+      </label>
+
+      <label>Password
+        <input id="lp" type="password" autocomplete="current-password" required>
+      </label>
+
+      <p id="le" class="lerr" role="alert"></p>
+      <button class="btn" type="submit">Sign in</button>
+
+      <details class="demo">
+        <summary>Demo accounts</summary>
+        <p>
+          Administrator: admin / admin123<br>
+          SBO officer: 2023-0157 / student123<br>
+          Student: 2023-0142 / student123
+        </p>
+      </details>
+    </form>
+  </div>
+
+  <!-- Main app: shown after sign in. Content is filled in by js/app.js -->
+  <div class="app hide" id="app">
+    <aside id="nav" aria-label="Main navigation"></aside>
+    <main id="view"></main>
+  </div>
+
+  <!-- QR code library (used for the student's QR code) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- Camera QR scanning -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+
+  <script src="js/config.js"></script>  <!-- database keys -->
+  <script src="js/db.js"></script>      <!-- talks to the database -->
+  <script src="js/app.js"></script>     <!-- screens and logic -->
+</body>
+</html>
