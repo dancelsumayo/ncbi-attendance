@@ -16,15 +16,36 @@ const programs=[
 {id:3,name:"General Assembly",date:"2026-03-05",type:"inout",lateAfter:"08:30",status:"Completed",venue:"Auditorium"},
 {id:4,name:"Career Orientation",date:"2026-11-15",type:"inout",lateAfter:"08:30",status:"Ongoing",venue:"Auditorium"},
 {id:5,name:"Foundation Day 2027",date:"2027-01-15",type:"in",lateAfter:"08:00",status:"Upcoming",venue:"School Gym"}];
-// att[programId][studentId] = {in,out,status}
-const att={1:{1:{in:"07:42",status:"Present"},2:{in:"08:15",status:"Late"},3:{in:"07:50",status:"Present"}},
+// Older sample programs get default times: attendance opens 07:00, starts at the cutoff, ends 17:00
+programs.forEach(p=>{p.open=p.open||"07:00";p.start=p.start||p.lateAfter;p.end=p.end||"17:00";p.status=autoStatus(p)});
+// att[programId][studentId] = {in,out,status,lateMin}
+const att={1:{1:{in:"07:42",status:"Present"},2:{in:"08:15",status:"Late",lateMin:15},3:{in:"07:50",status:"Present"}},
 2:{2:{in:"07:55",status:"Present"},4:{in:"07:40",status:"Present"}},
-3:{1:{in:"08:10",out:"16:00",status:"Present"},2:{in:"08:45",out:"15:50",status:"Late"},3:{in:"08:00",out:"16:05",status:"Present"}},
+3:{1:{in:"08:10",out:"16:00",status:"Present"},2:{in:"08:45",out:"15:50",status:"Late",lateMin:15},3:{in:"08:00",out:"16:05",status:"Present"}},
 4:{},5:{}};
 const $=s=>document.querySelector(s),pname=id=>programs.find(p=>p.id==id).name;
 let role=null,page="dash",me=null,log=[],lastResult=null;
 const now=()=>{const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")};
 const tag=s=>`<span class="tag ${s}">${s}</span>`;
+// ---------- Time helpers ----------
+const mins=t=>{const [h,m]=t.split(":").map(Number);return h*60+m};
+const lateMin=(t,cutoff)=>Math.max(0,mins(t)-mins(cutoff));  // minutes after the on-time cutoff
+const fmtTime=t=>{if(!t)return "—";const [h,m]=t.split(":").map(Number);return (h%12||12)+":"+String(m).padStart(2,"0")+(h<12?" AM":" PM")};
+const fmtDur=m=>m<60?m+" min":Math.floor(m/60)+" hr"+(m%60?" "+m%60+" min":"");
+const fmtLate=m=>fmtDur(m)+" late";
+const lateText=r=>r&&r.status==="Late"&&r.lateMin>0?fmtLate(r.lateMin):"";
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+// Status follows the clock: before attendance opens = Upcoming, until the program ends = Ongoing, then Completed
+function autoStatus(p){
+if(p.status==="Cancelled"||!p.open||!p.end)return p.status;
+const n=Date.now(),at=t=>new Date(p.date+"T"+t+":00").getTime();
+return n<at(p.open)?"Upcoming":n<=at(p.end)?"Ongoing":"Completed"}
+function closedReason(p){
+if(p.status==="Cancelled")return p.name+" was cancelled.";
+if(p.status==="Upcoming")return "Attendance for "+p.name+" opens at "+fmtTime(p.open)+" on "+p.date+".";
+if(p.status==="Completed")return "Attendance for "+p.name+" is closed.";
+return "This program is not accepting attendance."}
+
 // Passwords are stored as a SHA-256 hash (salted with the student number), never as plain text
 async function hashPw(no,pw){
 const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(no+":"+pw));
@@ -34,7 +55,7 @@ const isPresent=(pid,sid)=>{const a=(att[pid]||{})[sid];return !!(a&&a.in&&!a.ou
 function status(p,s){const r=(att[p.id]||{})[s.id];if(r)return r.status;return p.status==="Completed"?"Absent":"—"}
 
 // ---------- Navigation ----------
-const menus={admin:[["dash","Dashboard"],["scan","QR scanner"],["programs","Programs"],["students","Students"],["ctrl","Scan control"]],
+const menus={admin:[["dash","Dashboard"],["scan","QR scanner"],["attend","Attendance"],["programs","Programs"],["students","Students"],["ctrl","Scan control"]],
 student:[["sdash","My summary"],["sqr","My QR code"],["shist","My attendance"],["spw","Change password"]],
 checker:[["scan","QR scanner"],["sdash","My summary"],["sqr","My QR code"],["shist","My attendance"],["spw","Change password"]]};
 function nav(){
@@ -83,15 +104,24 @@ $("#tok").onkeydown=e=>{if(e.key==="Enter")doScan(e.target.value.trim())};
 paintLog();if(lastResult)showRes(lastResult);
 },
 programs(){
-$("#view").innerHTML=`<h1>Programs</h1><p class="sub">Create programs and set how attendance is taken.</p>
-<div class="panel"><h2>New program</h2><div class="row">
-<label>Name<input id="pn"></label><label>Date<input type="date" id="pd"></label>
-<label>Attendance<select id="pt"><option value="in">Login only</option><option value="inout">Login and logout</option></select></label>
-<label>Late after<input type="time" id="pl" value="08:00"></label><button class="btn" id="add">Create program</button></div></div>
-<div class="panel"><h2>All programs</h2><div class="tablewrap"><table><tr><th>Program</th><th>Date</th><th>Venue</th><th>Status</th><th></th></tr>
-${programs.map(p=>`<tr><td>${p.name}</td><td>${p.date}</td><td>${p.venue||"—"}</td><td>${tag(p.status)}</td><td>${p.status=="Upcoming"?`<button class="btn alt" data-s="${p.id}:Ongoing">Start</button> `:p.status=="Ongoing"?`<button class="btn alt" data-s="${p.id}:Completed">Finish</button> `:""}${p.status=="Upcoming"||p.status=="Ongoing"?`<button class="btn alt" data-s="${p.id}:Cancelled">Cancel</button>`:""}</td></tr>`).join("")}</table></div></div>`;
-$("#add").onclick=async()=>{const n=$("#pn").value.trim(),d=$("#pd").value;if(!n||!d)return alert("Enter a program name and date.");
-const p=await DB.addProgram({name:n,date:d,type:$("#pt").value,lateAfter:$("#pl").value,status:"Upcoming"});programs.push(p);att[p.id]={};render()};
+const ed=programs.find(p=>p.id===editId)||{name:"",date:"",type:"in",open:"09:00",lateAfter:"09:50",start:"10:00",end:"12:00"};
+$("#view").innerHTML=`<h1>Programs</h1><p class="sub">Set when attendance opens, when the program starts and ends, and the cutoff for being on time.</p>
+<div class="panel"><h2>${editId?"Edit program":"New program"}</h2>
+<div class="row"><label style="flex:1;min-width:200px">Name<input id="pn" value="${esc(ed.name)}"></label>
+<label>Date<input type="date" id="pd" value="${ed.date}"></label>
+<label>Attendance<select id="pt"><option value="in" ${ed.type=="in"?"selected":""}>Login only</option><option value="inout" ${ed.type=="inout"?"selected":""}>Login and logout</option></select></label></div>
+<div class="row"><label>Attendance opens<input type="time" id="po" value="${ed.open}"></label>
+<label>On time until<input type="time" id="pl" value="${ed.lateAfter}"></label>
+<label>Program starts<input type="time" id="ps" value="${ed.start}"></label>
+<label>Program ends<input type="time" id="pe" value="${ed.end}"></label></div>
+<p class="sub" style="margin:0 0 10px">Students scanned after the “on time until” time are still recorded, but marked late, with how late they were.</p>
+<div class="row"><button class="btn" id="add">${editId?"Save changes":"Create program"}</button>${editId?`<button class="btn alt" id="canc">Discard changes</button>`:""}</div>
+<p class="sub" id="pg-msg" style="margin:0" role="alert"></p></div>
+<div class="panel"><h2>All programs</h2><div class="tablewrap"><table><tr><th>Program</th><th>Date</th><th>Opens</th><th>On time until</th><th>Starts</th><th>Ends</th><th>Status</th><th></th></tr>
+${programs.map(p=>`<tr><td>${p.name}</td><td>${p.date}</td><td>${fmtTime(p.open)}</td><td>${fmtTime(p.lateAfter)}</td><td>${fmtTime(p.start)}</td><td>${fmtTime(p.end)}</td><td>${tag(p.status)}</td><td>${p.status!=="Cancelled"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-s="${p.id}:Cancelled">Cancel</button>`:""}</td></tr>`).join("")}</table></div></div>`;
+$("#add").onclick=saveProgram;
+if(editId)$("#canc").onclick=()=>{editId=null;render()};
+document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>{editId=+b.dataset.e;render();window.scrollTo(0,0)});
 document.querySelectorAll("[data-s]").forEach(b=>b.onclick=async()=>{const [id,st]=b.dataset.s.split(":");await DB.setProgram(id,{status:st});programs.find(p=>p.id==id).status=st;render()});
 },
 students(){
@@ -120,6 +150,19 @@ m.scrollIntoView({block:"center"})})};
 $("#q").oninput=draw;$("#cf").onchange=draw;draw();
 $("#ns-add").onclick=createAccount;
 },
+attend(){
+const ps=programs.filter(p=>p.status!=="Cancelled");
+if(!ps.length){$("#view").innerHTML=`<h1>Attendance</h1><div class="panel">No programs yet.</div>`;return}
+if(!ps.some(p=>p.id==attProg))attProg=(ps.find(p=>p.status==="Ongoing")||ps[ps.length-1]).id;
+const p=programs.find(x=>x.id==attProg),rows=students.filter(s=>s.active),cnt=k=>rows.filter(s=>status(p,s)===k).length;
+$("#view").innerHTML=`<h1>Attendance</h1><p class="sub">See who attended, who was late, and by how much.</p>
+<div class="panel"><div class="row"><label>Program<select id="ap">${ps.map(x=>`<option value="${x.id}" ${x.id==p.id?"selected":""}>${x.name} (${x.date})</option>`).join("")}</select></label></div>
+<p class="sub" style="margin:0 0 12px">Attendance opens ${fmtTime(p.open)}. On time until ${fmtTime(p.lateAfter)}. Starts ${fmtTime(p.start)}. Ends ${fmtTime(p.end)}.</p>
+<div class="grid"><div class="stat"><b>${cnt("Present")}</b><span>On time</span></div><div class="stat"><b>${cnt("Late")}</b><span>Late</span></div><div class="stat"><b>${cnt("Absent")}</b><span>Absent</span></div></div>
+<div class="tablewrap"><table><tr><th>Student no.</th><th>Name</th><th>Course</th><th>Time in</th><th>Time out</th><th>Status</th><th>Late by</th></tr>
+${rows.map(s=>{const r=(att[p.id]||{})[s.id]||{},st=status(p,s);return `<tr><td>${s.no}</td><td>${s.name}</td><td>${s.course}</td><td>${r.in||"—"}</td><td>${p.type=="in"?"n/a":r.out||"—"}</td><td>${st=="—"?"Not yet scanned":tag(st)}</td><td>${r.status==="Late"&&r.lateMin>0?fmtDur(r.lateMin):"—"}</td></tr>`}).join("")}</table></div></div>`;
+$("#ap").onchange=e=>{attProg=+e.target.value;render()};
+},
 ctrl(){
 const officers=students.filter(s=>s.checker&&s.active);
 const progs=programs.filter(p=>p.status==="Ongoing"||p.status==="Upcoming");
@@ -133,7 +176,7 @@ document.querySelectorAll("[data-m]").forEach(b=>b.onclick=async()=>{
 const [pid,sid]=b.dataset.m.split(":").map(Number),p=programs.find(x=>x.id===pid),rec=att[pid][sid];
 if(isPresent(pid,sid)){await DB.removeAttendance(pid,sid);delete att[pid][sid]}
 else if(rec){await DB.saveOut(pid,sid,null);rec.out=null}
-else{const t=now(),row={in:t,status:t>p.lateAfter?"Late":"Present"};if(await DB.saveIn(pid,sid,row))att[pid][sid]=row}
+else{const t=now(),lm=p.status==="Ongoing"?lateMin(t,p.lateAfter):0,row={in:t,status:lm>0?"Late":"Present",lateMin:lm};if(await DB.saveIn(pid,sid,row))att[pid][sid]=row}
 render()});
 },
 // ---------- Student views ----------
@@ -153,11 +196,12 @@ catch(e){m("Couldn’t save the new password. Check the internet connection and 
 },
 sdash(){
 const done=programs.filter(p=>p.status==="Completed"),st=done.map(p=>status(p,me));
+const lateTotal=done.reduce((a,p)=>a+(((att[p.id]||{})[me.id]||{}).lateMin||0),0);
 const pres=st.filter(x=>x=="Present").length,late=st.filter(x=>x=="Late").length,abs=st.filter(x=>x=="Absent").length;
 const pct=done.length?Math.round((pres+late)/done.length*100):0;
 $("#view").innerHTML=`<h1>${me.name}</h1><p class="sub">${me.no} · ${me.course}, year ${me.year}</p>
 <div class="grid"><div class="stat"><b>${done.length}</b><span>Programs held</span></div><div class="stat"><b>${pres+late}</b><span>Attended</span></div>
-<div class="stat"><b>${late}</b><span>Late</span></div><div class="stat"><b>${abs}</b><span>Absent</span></div></div>
+<div class="stat"><b>${late}</b><span>Late</span></div><div class="stat"><b>${fmtDur(lateTotal)}</b><span>Total time late</span></div><div class="stat"><b>${abs}</b><span>Absent</span></div></div>
 <div class="panel"><h2>Attendance rate: ${pct}%</h2><div class="bar"><i style="width:${pct}%"></i></div></div>`;
 },
 sqr(){
@@ -170,8 +214,40 @@ $("#dl").onclick=()=>{const c=$("#qr canvas"),i=$("#qr img"),a=document.createEl
 shist(){
 $("#view").innerHTML=`<h1>My attendance</h1><p class="sub">Every program and how you were recorded. You can’t edit these records.</p>
 <div class="panel"><div class="tablewrap"><table><tr><th>Program</th><th>Date</th><th>Time in</th><th>Time out</th><th>Status</th></tr>
-${programs.filter(p=>p.status!=="Cancelled"&&p.status!=="Upcoming").map(p=>{const r=(att[p.id]||{})[me.id]||{};return `<tr><td>${p.name}</td><td>${p.date}</td><td>${r.in||"—"}</td><td>${p.type=="in"?"n/a":r.out||"—"}</td><td>${status(p,me)=="—"?"Not yet recorded":tag(status(p,me))}</td></tr>`}).join("")}</table></div></div>`;
+${programs.filter(p=>p.status!=="Cancelled"&&p.status!=="Upcoming").map(p=>{const r=(att[p.id]||{})[me.id]||{};return `<tr><td>${p.name}</td><td>${p.date}</td><td>${r.in||"—"}</td><td>${p.type=="in"?"n/a":r.out||"—"}</td><td>${status(p,me)=="—"?"Not yet recorded":tag(status(p,me))+(lateText(r)?" "+lateText(r):"")}</td></tr>`}).join("")}</table></div></div>`;
 }};
+
+// ---------- Program details: validate, save, re-mark ----------
+let editId=null,attProg=null;
+function checkProgram(f){
+if(!f.name||!f.date||!f.open||!f.lateAfter||!f.start||!f.end)return "Fill in the name, the date, and all four times.";
+if(f.open>=f.start)return "Attendance must open before the program starts.";
+if(f.end<=f.start)return "The program must end after it starts.";
+if(f.lateAfter<f.open||f.lateAfter>f.start)return "“On time until” must be between the time attendance opens and the time the program starts.";
+return ""}
+async function saveProgram(){
+const m=t=>{$("#pg-msg").textContent=t};
+const f={name:$("#pn").value.trim(),date:$("#pd").value,type:$("#pt").value,open:$("#po").value,lateAfter:$("#pl").value,start:$("#ps").value,end:$("#pe").value};
+const bad=checkProgram(f);if(bad)return m(bad);
+try{
+if(editId){
+const p=programs.find(x=>x.id===editId),n=Object.keys(att[p.id]||{}).length;
+const cutoffChanged=f.lateAfter!==p.lateAfter||f.date!==p.date;
+if(cutoffChanged&&n&&!confirm(n+" attendance record(s) already exist. They will be re-marked on time or late using the new cutoff. Continue?"))return;
+await DB.updateProgram(p.id,f);Object.assign(p,f);p.status=autoStatus(p);
+if(cutoffChanged)await remark(p);
+editId=null;
+}else{
+const p=await DB.addProgram({...f,status:"Upcoming"});p.status=autoStatus(p);programs.push(p);att[p.id]={};
+}
+render();
+}catch(e){m("Couldn’t save the program. Check the internet connection and try again.")}
+}
+// After the cutoff changes, re-mark each record from the time the student was scanned
+async function remark(p){
+for(const [sid,rec] of Object.entries(att[p.id]||{})){
+const lm=lateMin(rec.in,p.lateAfter),st=lm>0?"Late":"Present";
+if(rec.status!==st||(rec.lateMin||0)!==lm){await DB.setAttendance(p.id,sid,{status:st,late_minutes:lm});rec.status=st;rec.lateMin=lm}}}
 
 // ---------- Create account (administrators only) ----------
 async function createAccount(){
@@ -199,12 +275,12 @@ const why=role==="checker"?await DB.scanAccess(p.id,me.id):null;
 if(why){stopCam();r={cls:"bad",title:"Scanning not allowed",msg:why}}
 else if(!s)r={cls:"bad",title:"Invalid QR code",msg:"No student matches this code."};
 else if(!s.active)r={cls:"bad",title:"Student account inactive",msg:s.name};
-else if(p.status!=="Ongoing")r={cls:"bad",title:"Program is not accepting attendance",msg:p.name+" is "+p.status.toLowerCase()+"."};
+else if(p.status!=="Ongoing")r={cls:"bad",title:"Program is not accepting attendance",msg:closedReason(p)};
 else{
 const rec=att[p.id][s.id];
 if(!rec){
-const late=t>p.lateAfter,row={in:t,status:late?"Late":"Present"};
-if(await DB.saveIn(p.id,s.id,row)){att[p.id][s.id]=row;r={cls:late?"late":"ok",title:late?"Recorded as late":"Attendance recorded",msg:s.name,s,act:"Time in",t,p}}
+const lm=lateMin(t,p.lateAfter),late=lm>0,row={in:t,status:late?"Late":"Present",lateMin:lm};
+if(await DB.saveIn(p.id,s.id,row)){att[p.id][s.id]=row;r={cls:late?"late":"ok",title:late?"Recorded as late":"Attendance recorded",msg:late?s.name+": "+fmtLate(lm):s.name,s,act:"Time in",t,p}}
 else r={cls:"bad",title:"Student already checked in",msg:s.name}}
 else if(p.type==="in")r={cls:"bad",title:"Student already checked in",msg:s.name+" at "+rec.in,s}
 else if(!rec.out){await DB.saveOut(p.id,s.id,t);rec.out=t;r={cls:"ok",title:"Time out recorded",msg:s.name,s,act:"Time out",t,p}}
@@ -242,8 +318,9 @@ const err=m=>{$("#le").textContent=m};
 const ready=(DB.on?DB.load():Promise.all(students.map(async s=>{s.pw=await hashPw(s.no,"student123")}))).catch(()=>err("Can’t reach the database. Check js/config.js."));
 // Pull in changes made on other devices (only redraw screens with nothing to type into)
 setInterval(async()=>{if(!role)return;try{await DB.load()}catch{return}
+programs.forEach(p=>p.status=autoStatus(p));
 if(me)me=students.find(x=>x.id===me.id)||me;
-if(["dash","sdash","shist"].includes(page))render()},5000);
+if(["dash","sdash","shist","attend"].includes(page))render()},5000);
 function logout(){role=null;me=null;$("#lf").reset();err("");$("#app").classList.add("hide");$("#login").classList.remove("hide")}
 $("#lf").onsubmit=async e=>{e.preventDefault();await ready;const u=$("#lu").value.trim(),p=$("#lp").value;
 if(u.toLowerCase()==="admin"&&p==="admin123"){role="admin";me=null;page="dash"}
