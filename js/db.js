@@ -27,6 +27,7 @@ const DB = (() => {
   const toProgram = r => ({
     id: r.id, name: r.name, date: r.date, type: r.type,
     lateAfter: r.late_after, status: r.status, venue: r.venue, scanning: Boolean(r.scanning), paused: Boolean(r.paused),
+    closedAt: r.closed_at ? Date.parse(r.closed_at) : null, reopenedAt: r.reopened_at ? Date.parse(r.reopened_at) : null,
     open: r.open_time, start: r.start_time, end: r.end_time
   });
 
@@ -107,7 +108,8 @@ const DB = (() => {
       if (!st || !st.active || !st.checker) return "Your SBO officer access was removed. Ask the administrator.";
       if (!p) return "This program wasn’t found.";
       p = { ...p, status: autoStatus(p) };
-      if (p.status !== "Ongoing" && !(mode === "out" && outGrace(p))) return closedReason(p);
+      const blocked = scanBlock(p, mode);
+      if (blocked) return blocked;
       if (p.paused) return "Scanning is paused by the administrator. Please wait.";
       if (st.lead) return a && a.time_out ? "You were scanned out of this program, so you can’t scan anymore." : null;
       if (!a || !a.time_in || a.time_out) return "A lead officer needs to scan your ID first. Once you’re scanned in, you can start scanning.";
