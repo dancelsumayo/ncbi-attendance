@@ -26,7 +26,7 @@ const DB = (() => {
 
   const toProgram = r => ({
     id: r.id, name: r.name, date: r.date, type: r.type,
-    lateAfter: r.late_after, status: r.status, venue: r.venue, scanning: Boolean(r.scanning),
+    lateAfter: r.late_after, status: r.status, venue: r.venue, scanning: Boolean(r.scanning), paused: Boolean(r.paused),
     open: r.open_time, start: r.start_time, end: r.end_time
   });
 
@@ -46,7 +46,7 @@ const DB = (() => {
       programs.forEach(x => (att[x.id] = {}));
       a.forEach(r => {
         if (att[r.program_id]) {
-          att[r.program_id][r.student_id] = { in: r.time_in, out: r.time_out, status: r.status, lateMin: r.late_minutes || 0 };
+          att[r.program_id][r.student_id] = { in: r.time_in, out: r.time_out, status: r.status, lateMin: r.late_minutes || 0, by: r.scanned_by };
         }
       });
     },
@@ -56,7 +56,7 @@ const DB = (() => {
       if (!on) return true;
       try {
         await req("attendance", "POST",
-          { program_id: pid, student_id: sid, time_in: row.in, status: row.status, late_minutes: row.lateMin || 0 });
+          { program_id: pid, student_id: sid, time_in: row.in, status: row.status, late_minutes: row.lateMin || 0, scanned_by: row.by || null });
         return true;
       } catch (e) {
         if (e.status === 409) return false;
@@ -78,7 +78,7 @@ const DB = (() => {
     },
 
     async addStudent(st) {
-      if (!on) return { ...st, id: students.length + 1 };
+      if (!on) return { ...st, id: Math.max(0, ...students.map(v => v.id)) + 1 };
       const [row] = await req("students", "POST", st, "return=representation");
       return row;
     },
@@ -89,12 +89,14 @@ const DB = (() => {
 
     // Checked against the database on every scan by an SBO officer.
     // Returns null if the officer may scan, otherwise the reason they may not.
-    async scanAccess(pid, officerId) {
+    //   Lead officers can scan as soon as the event is open (unless scanned out).
+    //   Other officers can scan once someone has scanned them in.
+    async scanAccess(pid, officerId, mode) {
       let p, st, a;
       if (on) {
         [p] = await req(`programs?id=eq.${pid}&select=*`);
         if (p) p = toProgram(p);
-        [st] = await req(`students?id=eq.${officerId}&select=active,checker`);
+        [st] = await req(`students?id=eq.${officerId}&select=active,checker,lead`);
         [a] = await req(`attendance?program_id=eq.${pid}&student_id=eq.${officerId}&select=time_in,time_out`);
       } else {
         p = programs.find(x => x.id == pid);
@@ -105,9 +107,10 @@ const DB = (() => {
       if (!st || !st.active || !st.checker) return "Your SBO officer access was removed. Ask the administrator.";
       if (!p) return "This program wasn’t found.";
       p = { ...p, status: autoStatus(p) };
-      if (p.status !== "Ongoing") return closedReason(p);
-      if (!p.scanning) return "Scanning is turned off for this program.";
-      if (!a || !a.time_in || a.time_out) return "You must be marked present at this program before you can scan.";
+      if (p.status !== "Ongoing" && !(mode === "out" && outGrace(p))) return closedReason(p);
+      if (p.paused) return "Scanning is paused by the administrator. Please wait.";
+      if (st.lead) return a && a.time_out ? "You were scanned out of this program, so you can’t scan anymore." : null;
+      if (!a || !a.time_in || a.time_out) return "A lead officer needs to scan your ID first. Once you’re scanned in, you can start scanning.";
       return null;
     },
 
@@ -120,6 +123,19 @@ const DB = (() => {
 
     async setAttendance(pid, sid, fields) {
       if (on) await req(`attendance?program_id=eq.${pid}&student_id=eq.${sid}`, "PATCH", fields);
+    },
+
+    // Several students at once (CSV import)
+    async addStudents(list) {
+      if (!on) { let n = Math.max(0, ...students.map(v => v.id)); return list.map(st => ({ ...st, id: ++n })); }
+      return req("students", "POST", list, "return=representation");
+    },
+
+    // Look one student up by number, straight from the database (used when activating an account)
+    async findStudent(no) {
+      if (!on) return students.find(v => v.no === no) || null;
+      const [row] = await req(`students?no=eq.${encodeURIComponent(no)}`);
+      return row || null;
     },
 
     async setProgram(id, fields) { if (on) await req(`programs?id=eq.${id}`, "PATCH", fields); },
