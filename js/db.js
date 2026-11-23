@@ -6,8 +6,16 @@ const DB = (() => {
   const BASE = (cfg.SUPABASE_URL || "").trim().replace(/\/+$/, "");  // no trailing slash
   const KEY = (cfg.SUPABASE_KEY || "").trim();
   const on = Boolean(BASE && KEY);
+  // Counts every save (once when it starts and once when it ends). A refresh that was already
+  // on its way while something was saved is thrown away, so it can't bring old data back.
+  let writes = 0;
 
   async function req(path, method = "GET", body, prefer = "return=minimal") {
+    if (method !== "GET") writes++;
+    try { return await send(path, method, body, prefer); } finally { if (method !== "GET") writes++; }
+  }
+
+  async function send(path, method, body, prefer) {
     const res = await fetch(`${BASE}/rest/v1/${path}`, {
       method,
       headers: {
@@ -27,6 +35,7 @@ const DB = (() => {
   const toProgram = r => ({
     id: r.id, name: r.name, date: r.date, type: r.type,
     lateAfter: r.late_after, status: r.status, venue: r.venue, scanning: Boolean(r.scanning), paused: Boolean(r.paused),
+    term: r.term || null, counts: r.counts_for_clearance !== false,
     closedAt: r.closed_at ? Date.parse(r.closed_at) : null, reopenedAt: r.reopened_at ? Date.parse(r.reopened_at) : null,
     open: r.open_time, start: r.start_time, end: r.end_time
   });
@@ -37,9 +46,13 @@ const DB = (() => {
     // Copy everything from the database into the in-memory lists the screens use
     async load() {
       if (!on) return;
-      const [s, p, a] = await Promise.all([
-        req("students?order=id"), req("programs?order=id"), req("attendance")
+      const before = writes;
+      const [s, p, a, pen] = await Promise.all([
+        req("students?order=id"), req("programs?order=id"), req("attendance"),
+        req("penalties?order=id").catch(() => [])   // older databases may not have this table yet
       ]);
+      if (before !== writes) return;   // something was saved while this was loading: keep the newer local data
+      penalties.splice(0, penalties.length, ...pen);
       students.splice(0, students.length, ...s);
       programs.splice(0, programs.length, ...p.map(toProgram));
       programs.forEach(x => (x.status = autoStatus(x)));  // status follows the clock
@@ -47,7 +60,7 @@ const DB = (() => {
       programs.forEach(x => (att[x.id] = {}));
       a.forEach(r => {
         if (att[r.program_id]) {
-          att[r.program_id][r.student_id] = { in: r.time_in, out: r.time_out, status: r.status, lateMin: r.late_minutes || 0, by: r.scanned_by };
+          att[r.program_id][r.student_id] = { in: r.time_in, out: r.time_out, status: r.status, lateMin: r.late_minutes || 0, by: r.scanned_by, remark: r.remark };
         }
       });
     },
@@ -73,7 +86,8 @@ const DB = (() => {
       if (!on) return { ...p, id: programs.length + 1 };
       const [row] = await req("programs", "POST",
         { name: p.name, date: p.date, type: p.type, late_after: p.lateAfter, status: p.status,
-          open_time: p.open, start_time: p.start, end_time: p.end },
+          open_time: p.open, start_time: p.start, end_time: p.end,
+          term: p.term || null, counts_for_clearance: p.counts !== false },
         "return=representation");
       return toProgram(row);
     },
@@ -119,7 +133,8 @@ const DB = (() => {
     async updateProgram(id, f) {
       if (on) await req(`programs?id=eq.${id}`, "PATCH", {
         name: f.name, date: f.date, type: f.type, late_after: f.lateAfter,
-        open_time: f.open, start_time: f.start, end_time: f.end
+        open_time: f.open, start_time: f.start, end_time: f.end,
+        term: f.term || null, counts_for_clearance: f.counts !== false
       });
     },
 
@@ -139,6 +154,44 @@ const DB = (() => {
       const [row] = await req(`students?no=eq.${encodeURIComponent(no)}`);
       return row || null;
     },
+
+    // Photos live in their own table and are fetched one at a time, so the main refresh stays small
+    async getPhoto(id) {
+      if (!on) return photos[id] || null;
+      const [r] = await req(`student_photos?student_id=eq.${id}&select=photo`);
+      return r ? r.photo : null;
+    },
+    async setPhoto(id, url) {
+      if (on) await req("student_photos?on_conflict=student_id", "POST", { student_id: id, photo: url }, "resolution=merge-duplicates,return=minimal");
+    },
+
+    // Corrections: add or replace one attendance record
+    async upsertAttendance(pid, sid, row) {
+      if (on) await req("attendance?on_conflict=program_id,student_id", "POST", {
+        program_id: pid, student_id: sid, time_in: row.in, time_out: row.out, status: row.status,
+        late_minutes: row.lateMin || 0, scanned_by: row.by || null, remark: row.remark || null
+      }, "resolution=merge-duplicates,return=minimal");
+    },
+    async addLog(e) {
+      if (!on) return { id: Math.max(0, ...changeLog.map(v => v.id)) + 1 };
+      const [row] = await req("attendance_log", "POST", {
+        program_id: e.program_id, student_id: e.student_id, action: e.action,
+        old_value: e.old_value, new_value: e.new_value, reason: e.reason, by_user: e.by_user
+      }, "return=representation");
+      return row;
+    },
+    async loadLog() {
+      if (!on) return;
+      const rows = await req("attendance_log?order=at.desc&limit=500");
+      changeLog.splice(0, changeLog.length, ...rows);
+    },
+
+    async addPenalty(x) {
+      if (!on) return { ...x, id: Math.max(0, ...penalties.map(v => v.id)) + 1, created_at: new Date().toISOString() };
+      const [row] = await req("penalties", "POST", x, "return=representation");
+      return row;
+    },
+    async setPenalty(id, fields) { if (on) await req(`penalties?id=eq.${id}`, "PATCH", fields); },
 
     async setProgram(id, fields) { if (on) await req(`programs?id=eq.${id}`, "PATCH", fields); },
     async setStudent(id, fields) { if (on) await req(`students?id=eq.${id}`, "PATCH", fields); }

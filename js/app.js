@@ -23,10 +23,13 @@ const programs=[
 // Older sample programs get default times: attendance opens 07:00, starts at the cutoff, ends 17:00
 programs.forEach(p=>{p.open=p.open||"07:00";p.start=p.start||p.lateAfter;p.end=p.end||"17:00";p.status=autoStatus(p)});
 // att[programId][studentId] = {in,out,status,lateMin}
-const att={1:{1:{in:"07:42",status:"Present"},2:{in:"08:15",status:"Late",lateMin:15},3:{in:"07:50",status:"Present"}},
-2:{2:{in:"07:55",status:"Present"},4:{in:"07:40",status:"Present"}},
-3:{1:{in:"08:10",out:"16:00",status:"Present"},2:{in:"08:45",out:"15:50",status:"Late",lateMin:15},3:{in:"08:00",out:"16:05",status:"Present"}},
+const att={1:{1:{in:"07:42",status:"Present"},2:{in:"08:15",status:"Late",lateMin:15},3:{in:"07:50",status:"Present"},4:{in:"07:48",status:"Present"},7:{in:"07:55",status:"Present"},10:{in:"08:20",status:"Late",lateMin:20}},
+2:{2:{in:"07:55",status:"Present"},4:{in:"07:40",status:"Present"},7:{in:"07:58",status:"Present"},8:{in:"07:52",status:"Present"},10:{in:"07:45",status:"Present"},3:{status:"Excused",remark:"Medical certificate"}},
+3:{1:{in:"08:10",out:"16:00",status:"Present"},2:{in:"08:45",out:"15:50",status:"Late",lateMin:15},3:{in:"08:00",out:"16:05",status:"Present"},7:{in:"08:05",out:"16:10",status:"Present"},10:{in:"08:20",status:"Present"}},
 4:{},5:{}};
+const penalties=[{id:1,student_id:6,term:"2nd Semester 2025-2026",note:"4 hours of community service",slips:4,settled:false,created_at:new Date().toISOString()}];
+const changeLog=[{id:1,at:new Date(Date.now()-86400000).toISOString(),program_id:2,student_id:3,action:"Marked excused",old_value:"Absent (no record)",new_value:"Excused: Medical certificate",reason:"Medical certificate",by_user:"Administrator"}];
+const photos={};   // student id -> small photo (data URL), or false when the student has none
 const $=s=>document.querySelector(s),pname=id=>programs.find(p=>p.id==id).name;
 let role=null,page="dash",me=null,log=[],lastResult=null;
 const now=()=>{const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")};
@@ -85,40 +88,64 @@ return p.status==="Ongoing"&&!p.paused&&(me.lead?!(r&&r.out):isPresent(p.id,me.i
 function status(p,s){const r=(att[p.id]||{})[s.id];if(r)return r.status;return p.status==="Completed"?"Absent":"—"}
 
 // ---------- Navigation ----------
-const menus={admin:[["dash","Dashboard"],["scan","QR scanner"],["attend","Attendance"],["programs","Programs"],["students","Students"],["ctrl","Scan team"]],
+const menus={admin:[["dash","Dashboard"],["scan","QR scanner"],["attend","Attendance"],["clear","Clearance"],["programs","Programs"],["students","Students"],["ctrl","Scan team"],["hist","History"]],
 student:[["sdash","My summary"],["sqr","My QR code"],["shist","My attendance"],["spw","Change password"]],
 checker:[["scan","QR scanner"],["sdash","My summary"],["sqr","My QR code"],["shist","My attendance"],["spw","Change password"]]};
 function nav(){
 $("#nav").innerHTML=`<div class="brand"><b>North Coast Bohol Institute</b><span>Program attendance</span></div>`+
-(me&&me.must_change_pw?menus.student.filter(x=>x[0]==="spw"):menus[role]).map(([k,l])=>`<button class="${k===page?"on":""}" data-k="${k}">${l}</button>`).join("")+
+(me&&me.must_change_pw?menus.student.filter(x=>x[0]==="spw"):menus[role]).map(([k,l])=>`<button class="${k===page||(page==="profile"&&k===profBack)?"on":""}" data-k="${k}">${l}</button>`).join("")+
 `<div class="role"><b>${role=="admin"?"Administrator":me.name}</b><br>${role=="admin"?"Full access":role=="checker"?"SBO officer":"Student"}<button id="out" style="margin-top:8px;border:1px solid #dcb57c;display:block;text-align:center;width:100%">Sign out</button></div>`;
 document.querySelectorAll("#nav [data-k]").forEach(b=>b.onclick=()=>{page=b.dataset.k;render()});
 $("#out").onclick=logout;
 }
-function render(){stopCam();if(me&&me.must_change_pw)page="spw";nav();views[page]();}
+function render(){stopCam();camHandler=null;if(me&&me.must_change_pw)page="spw";nav();views[page]();}
 
 // ---------- Admin views ----------
 const views={
 dash(){
-const act=programs.find(p=>p.status==="Ongoing"),rec=Object.values(att).flatMap(o=>Object.values(o));
-const c=k=>programs.filter(p=>p.status===k).length,cnt=s=>rec.filter(r=>r.status===s).length;
-$("#view").innerHTML=`<h1>Dashboard</h1><p class="sub">Overview of school program participation.</p>
+const tl=termsList(),term=tl.includes(dashTerm)?dashTerm:currentTerm();dashTerm=term;
+const active=students.filter(x=>x.active),reps=active.map(x=>({x,r:slipReport(x,term)}));
+const finals=finalPrograms(term),groups=groupStats(term).filter(g=>g.expected>0);
+const best=groups.filter(g=>g.punct!==null).sort((a,b)=>b.punct-a.punct||b.rate-a.rate)[0],worst=[...groups].sort((a,b)=>a.rate-b.rate)[0];
+const nMissing=reps.filter(o=>o.r.status==="Missing slips").length,nPend=penalties.filter(x=>!x.settled&&x.term===term).length,nAct=active.filter(x=>!x.pw).length;
+const going=programs.filter(p=>p.status==="Ongoing"),next=programs.filter(p=>p.status==="Upcoming").sort((a,b)=>(a.date+a.open).localeCompare(b.date+b.open))[0];
+const attention=reps.filter(o=>o.r.missing.length||o.r.late>=3).sort((a,b)=>b.r.missing.length-a.r.missing.length||b.r.late-a.r.late||a.x.name.localeCompare(b.x.name)).slice(0,6);
+const perfect=reps.filter(o=>o.r.attended>0&&o.r.late===0&&o.r.absent===0&&o.r.missing.length===0).sort((a,b)=>b.r.attended-a.r.attended||a.x.name.localeCompare(b.x.name)).slice(0,6);
+const sorters={rate:(a,b)=>(b.rate??-1)-(a.rate??-1),punct:(a,b)=>(b.punct??-1)-(a.punct??-1),absent:(a,b)=>b.absent-a.absent,missing:(a,b)=>b.missing-a.missing};
+const pc=v=>v===null?"—":Math.round(v*100)+"%";
+const person=o=>`<div class="listrow"><div><button class="link" data-pf="${o.x.id}">${esc(o.x.name)}</button><br><small>${o.x.course} year ${o.x.year}</small></div>`;
+$("#view").innerHTML=`<div class="head"><div><h1>Dashboard</h1><p class="sub">${active.length} current students. ${finals.length?finals.length+" finished program"+(finals.length==1?"":"s")+" count toward clearance in this term.":"No finished programs count toward clearance in this term yet."}</p></div>
+<label>Term<select id="dt">${tl.map(t=>`<option>${esc(t)}</option>`).join("")}</select></label></div>
+<div class="panel"><div class="combo"><label>Find a student<input id="dq" role="combobox" aria-expanded="false" aria-controls="dsug" aria-autocomplete="list" autocomplete="off" placeholder="Name or student number"></label><ul id="dsug" class="sug hide" role="listbox"></ul></div>
+<p class="hint" style="margin:8px 0 0">Open anyone’s attendance, slips and clearance status.</p></div>
 <div class="grid">
-<div class="stat"><b>${students.length}</b><span>Registered students</span></div>
-<div class="stat"><b>${programs.length}</b><span>Programs</span></div>
-<div class="stat"><b>${c("Upcoming")}</b><span>Upcoming</span></div>
-<div class="stat"><b>${c("Ongoing")}</b><span>Ongoing</span></div>
-<div class="stat"><b>${cnt("Present")}</b><span>Present records</span></div>
-<div class="stat"><b>${cnt("Late")}</b><span>Late records</span></div></div>
-<div class="panel"><h2>Programs</h2><div class="tablewrap"><table><tr><th>Program</th><th>Date</th><th>Mode</th><th>Status</th><th>Attended</th></tr>
-${programs.map(p=>`<tr><td>${p.name}</td><td>${p.date}</td><td>${p.type=="in"?"Login only":"Login and logout"}</td><td>${tag(p.status)}</td><td>${Object.keys(att[p.id]||{}).length}/${students.filter(s=>s.active).length}</td></tr>`).join("")}</table></div></div>`;
+<button class="statbtn" data-go="missing"><b>${nMissing}</b><span>Students with missing slips</span></button>
+<button class="statbtn" data-go="pending"><b>${nPend}</b><span>Penalties not settled yet</span></button>
+<button class="statbtn" data-go="inactive"><b>${nAct}</b><span>Accounts not activated</span></button></div>
+<div class="two2"><div class="panel"><h2>Happening now</h2>${going.length?going.map(p=>{const t=progStats(p);return `<div class="listrow"><div><b>${esc(p.name)}</b><br><small>${fmtTime(p.start)} to ${fmtTime(p.end)}</small></div><span>${t.present+t.late} scanned in</span></div>`}).join(""):"<p>No program is open for scanning right now.</p>"}</div>
+<div class="panel"><h2>Coming up next</h2>${next?`<div class="listrow"><div><b>${esc(next.name)}</b><br><small>${next.date}, attendance opens ${fmtTime(next.open)}</small></div></div>`:"<p>No upcoming programs.</p>"}</div></div>
+${groups.length?`<div class="two2"><div class="panel callout"><small>Most punctual</small><h2>${best?best.name:"Not enough data"}</h2><p>${best?pc(best.punct)+" of scans on time":""}</p></div>
+<div class="panel callout bad"><small>Lowest attendance</small><h2>${worst.name}</h2><p>${pc(worst.rate)} attended, ${worst.absent} absence${worst.absent==1?"":"s"}</p></div></div>
+<div class="panel"><div class="head"><h2>Course and year</h2><label>Rank by<select id="ds"><option value="rate">Highest attendance</option><option value="punct">Most punctual</option><option value="absent">Most absences</option><option value="missing">Most missing slips</option></select></label></div>
+<div class="tablewrap"><table class="rank"><tr><th>Course and year</th><th>Students</th><th>Attendance</th><th>On time</th><th>Absences</th><th>Missing slips</th></tr>
+${[...groups].sort(sorters[dashSort]).map(g=>`<tr><td><b>${g.name}</b></td><td>${g.students}</td><td>${pc(g.rate)}<div class="bar"><i style="width:${Math.round((g.rate||0)*100)}%"></i></div></td><td>${pc(g.punct)}</td><td>${g.absent}</td><td>${g.missing}</td></tr>`).join("")}</table></div></div>`:`<div class="panel"><h2>Course and year</h2><p>Rankings appear after the first program of the term finishes.</p></div>`}
+<div class="two2"><div class="panel"><h2>Needs attention</h2>${attention.length?attention.map(o=>person(o)+`<span>${o.r.missing.length} missing, ${o.r.late} late</span></div>`).join(""):"<p>No one needs attention right now.</p>"}</div>
+<div class="panel"><h2>Perfect record</h2>${perfect.length?perfect.map(o=>person(o)+`<span>${o.r.attended} of ${o.r.attended} on time</span></div>`).join(""):"<p>No one has a perfect record yet.</p>"}</div></div>`;
+$("#dt").value=term;$("#dt").onchange=e=>{dashTerm=e.target.value;render()};
+if($("#ds")){$("#ds").value=dashSort;$("#ds").onchange=e=>{dashSort=e.target.value;render()}}
+document.querySelectorAll("#view [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"dash"));
+document.querySelectorAll("#view [data-go]").forEach(b=>b.onclick=()=>{const g=b.dataset.go;
+if(g==="inactive"){fl={q:"",course:"",year:"",role:"",status:"pending"};page="students"}
+else{cl={term,q:"",course:"",year:"",status:g==="missing"?"Missing slips":"Penalty pending",sort:"name"};page="clear"}
+render()});
+typeahead("#dq","#dsug",q=>students.map(x=>({x,sc:matchScore(q,x.name+" "+x.no+" "+(x.email||""))})).filter(o=>o.sc>0).sort((a,b)=>b.sc-a.sc||a.x.name.localeCompare(b.x.name)).map(o=>({title:o.x.name,sub:o.x.no+", "+o.x.course+" year "+o.x.year+(o.x.active?"":" (inactive)"),id:o.x.id})),it=>openProfile(it.id,"dash"));
 },
 scan(){
-const list=role==="admin"?programs.filter(p=>p.status!=="Cancelled"):programs.filter(officerCan);
+const list=role==="admin"?programs.filter(p=>p.status==="Ongoing"):programs.filter(officerCan);
 const open=list.filter(p=>p.status==="Ongoing");
-if(role!=="admin"&&!list.length){
+if(!list.length){
 const going=programs.filter(p=>p.status==="Ongoing"),leads=students.filter(x=>x.lead&&x.active).map(x=>x.name).join(", ")||"none set yet, ask the administrator";
-const why=!going.length?"No event has attendance open right now.":going.every(p=>p.paused)?"Scanning is paused by the administrator.":"A lead officer needs to scan your ID first. Lead officers: "+leads+".";
+const why=role==="admin"?"No program is open for scanning right now. A program opens when its attendance opening time arrives, and you can reopen a finished program on the Programs page.":!going.length?"No event has attendance open right now.":going.every(p=>p.paused)?"Scanning is paused by the administrator.":"A lead officer needs to scan your ID first. Lead officers: "+leads+".";
 $("#view").innerHTML=`<h1>QR scanner</h1><div class="panel"><h2>Scanning isn’t available yet</h2><p>${why}</p><p class="hint">This page updates by itself. Once you can scan, the scanner appears here.</p></div>`;return}
 $("#view").innerHTML=`<h1>QR scanner</h1><p class="sub">Choose a program, then scan a student’s ID.</p>
 <div class="scan"><div class="panel"><h2>Scan</h2>
@@ -131,30 +158,30 @@ $("#view").innerHTML=`<h1>QR scanner</h1><p class="sub">Choose a program, then s
 <div class="row">${DB.on?"":students.map(s=>`<button class="btn alt" data-t="${s.token}">${s.name.split(" ")[0]}</button>`).join("")}${DB.on?"":`<button class="btn alt" data-t="NCBI-XXXXXX">Bad code</button>`}</div></div>
 <div><div class="result" id="res" aria-live="polite"><h3>Ready to scan</h3><p class="big">Results appear here.</p></div></div></div>
 <div class="panel"><h2>Recent scans</h2><div class="tablewrap"><table id="lg"></table></div></div>`;
-document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>doScan(b.dataset.t));
+document.querySelectorAll("#view [data-t]").forEach(b=>b.onclick=()=>doScan(b.dataset.t));
 $("#go").onclick=()=>doScan($("#tok").value.trim());
 $("#cam").onclick=toggleCam;
 const syncMode=()=>{const p=programs.find(x=>x.id==$("#sp").value),io=Boolean(p&&p.type==="inout");$("#modebox").classList.toggle("hide",!io);
-if(io){document.querySelectorAll("[data-mode]").forEach(b=>b.classList.toggle("on",b.dataset.mode===scanMode));
+if(io){document.querySelectorAll("#view [data-mode]").forEach(b=>b.classList.toggle("on",b.dataset.mode===scanMode));
 $("#modehint").textContent=scanMode==="in"?"Scanning students as they arrive.":"Scanning students as they leave. Check-out stays open until "+closeLabel(p)+"."}};
-$("#sp").onchange=syncMode;document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{scanMode=b.dataset.mode;syncMode()});syncMode();
+$("#sp").onchange=syncMode;document.querySelectorAll("#view [data-mode]").forEach(b=>b.onclick=()=>{scanMode=b.dataset.mode;syncMode()});syncMode();
 $("#tok").onkeydown=e=>{if(e.key==="Enter")doScan(e.target.value.trim())};
 paintLog();if(lastResult)showRes(lastResult);
 },
 programs(){
 const canReopen=p=>p.status==="Completed"&&(p.type==="inout"||Date.now()<=atTime(p,p.end));
 const hint=p=>p.status==="Ongoing"&&p.type==="inout"?"Check-out open until "+closeLabel(p):p.status==="Completed"?(isManualClose(p)?"Closed by admin":p.type==="inout"?"Closed automatically":""):"";
+const actions=p=>p.status==="Upcoming"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-x="${p.id}">Cancel</button>`:p.status==="Ongoing"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-c="${p.id}">Close</button> <button class="btn alt" data-x="${p.id}">Cancel</button>`:p.status==="Completed"?`<button class="btn alt" data-e="${p.id}">Edit</button>${canReopen(p)?` <button class="btn alt" data-o="${p.id}">Reopen</button>`:""}`:"";
 $("#view").innerHTML=`<div class="head"><div><h1>Programs</h1><p class="sub">Set when attendance opens, when the program starts and ends, and how long students have to arrive on time.</p></div><button class="btn" id="new-pg">New program</button></div>
 <div class="panel"><div class="tablewrap"><table><tr><th>Program</th><th>Date</th><th>Attendance</th><th>Opens</th><th>Starts</th><th>Ends</th><th>On time until</th><th>Status</th><th><span class="sr">Actions</span></th></tr>
-${[...programs].sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<tr><td>${p.name}</td><td>${p.date}</td><td>${p.type==="inout"?"Check-in and check-out":"Check-in only"}</td><td>${fmtTime(p.open)}</td><td>${fmtTime(p.start)}</td><td>${fmtTime(p.end)}</td><td>${fmtTime(p.lateAfter)}</td>
-<td>${tag(p.status)}${hint(p)?`<br><small>${hint(p)}</small>`:""}</td>
-<td class="nowrap">${p.status==="Upcoming"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-x="${p.id}">Cancel</button>`:p.status==="Ongoing"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-c="${p.id}">Close</button> <button class="btn alt" data-x="${p.id}">Cancel</button>`:canReopen(p)?`<button class="btn alt" data-o="${p.id}">Reopen</button>`:""}</td></tr>`).join("")}</table></div></div>`;
+${[...programs].sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<tr><td>${esc(p.name)}<br><small>${esc(termOf(p))}${p.counts===false?", <b>not for clearance</b>":""}</small></td><td>${p.date}</td><td>${p.type==="inout"?"Check-in and check-out":"Check-in only"}</td><td>${fmtTime(p.open)}</td><td>${fmtTime(p.start)}</td><td>${fmtTime(p.end)}</td><td>${fmtTime(p.lateAfter)}</td>
+<td>${tag(p.status)}${hint(p)?`<br><small>${hint(p)}</small>`:""}</td><td class="nowrap">${actions(p)}</td></tr>`).join("")}</table></div></div>`;
 $("#new-pg").onclick=()=>programDialog();
 const prog=b=>programs.find(x=>x.id==b.dataset.e||x.id==b.dataset.x||x.id==b.dataset.c||x.id==b.dataset.o);
-document.querySelectorAll("[data-e]").forEach(b=>b.onclick=()=>programDialog(prog(b)));
-document.querySelectorAll("[data-x]").forEach(b=>b.onclick=()=>cancelProgram(prog(b)));
-document.querySelectorAll("[data-c]").forEach(b=>b.onclick=()=>closeProgramDialog(prog(b)));
-document.querySelectorAll("[data-o]").forEach(b=>b.onclick=()=>reopenDialog(prog(b)));
+document.querySelectorAll("#view [data-e]").forEach(b=>b.onclick=()=>programDialog(prog(b)));
+document.querySelectorAll("#view [data-x]").forEach(b=>b.onclick=()=>cancelProgram(prog(b)));
+document.querySelectorAll("#view [data-c]").forEach(b=>b.onclick=()=>closeProgramDialog(prog(b)));
+document.querySelectorAll("#view [data-o]").forEach(b=>b.onclick=()=>reopenDialog(prog(b)));
 },
 students(){
 const courses=[...new Set(students.map(x=>x.course))].sort();
@@ -192,6 +219,102 @@ $("#add-st").onclick=()=>studentDialog();
 $("#imp-st").onclick=importDialog;$("#print-st").onclick=printDialog;
 draw();
 },
+clear(){
+const tl=termsList(),term=tl.includes(cl.term)?cl.term:currentTerm();cl.term=term;
+const act=students.filter(x=>x.active),finals=finalPrograms(term),courses=[...new Set(act.map(x=>x.course))].sort(),years=[...new Set(act.map(x=>x.year))].sort((a,b)=>a-b);
+$("#view").innerHTML=`<div class="head"><div><h1>Clearance</h1><p class="sub">Slips collected by each student in a term. Only finished programs that count for clearance are included.</p></div>
+<label>Term<select id="cl-t">${tl.map(t=>`<option>${esc(t)}</option>`).join("")}</select></label></div>
+<div class="panel"><h2>Clearance desk</h2><p class="hint" style="margin:0 0 10px">Scan a student’s ID, or type their student number, to see their slips right away.</p>
+<div class="row"><label class="grow">Student number or QR code<input id="desk-in" placeholder="e.g. 2023-0142" autocomplete="off"></label><button class="btn" id="desk-go">Find</button><button class="btn alt" id="cam">Start camera</button></div>
+<div id="reader" class="hide"></div><div id="desk-res"></div></div>
+<div class="panel"><div class="pills" id="cl-sum"></div><div class="filters">
+<label class="grow">Search<input id="cl-q" placeholder="Name or student number"></label>
+<label>Course<select id="cl-c"><option value="">All courses</option>${courses.map(c=>`<option>${c}</option>`).join("")}</select></label>
+<label>Year<select id="cl-y"><option value="">All years</option>${years.map(y=>`<option value="${y}">Year ${y}</option>`).join("")}</select></label>
+<label>Status<select id="cl-s"><option value="">All</option><option>Clear</option><option>Missing slips</option><option>Penalty pending</option></select></label>
+<label>Sort by<select id="cl-o"><option value="name">Name A to Z</option><option value="missing">Most missing slips</option><option value="late">Most late</option></select></label>
+<button class="btn alt" id="cl-x">Clear filters</button><button class="btn alt" id="cl-print">Print list</button></div>
+<p class="sub" id="cl-count"></p><div class="tablewrap"><table id="cl-table"></table></div></div>`;
+$("#cl-t").value=term;$("#cl-q").value=cl.q;$("#cl-c").value=cl.course;$("#cl-y").value=cl.year;$("#cl-s").value=cl.status;$("#cl-o").value=cl.sort;
+camHandler=deskLookup;
+let shown=[];
+const draw=()=>{
+const all=act.map(x=>({x,r:slipReport(x,term)}));
+const list=all.filter(o=>matchScore(cl.q,o.x.name+" "+o.x.no)>0&&(!cl.course||o.x.course===cl.course)&&(!cl.year||String(o.x.year)===cl.year)&&(!cl.status||o.r.status===cl.status));
+const cmp={name:(a,b)=>a.x.name.localeCompare(b.x.name),missing:(a,b)=>b.r.missing.length-a.r.missing.length||a.x.name.localeCompare(b.x.name),late:(a,b)=>b.r.late-a.r.late||a.x.name.localeCompare(b.x.name)}[cl.sort];
+list.sort(cmp);shown=list;
+const n=k=>all.filter(o=>o.r.status===k).length;
+$("#cl-sum").innerHTML=finals.length?`<span class="pill ok"><b>${n("Clear")}</b> clear</span><span class="pill late"><b>${n("Penalty pending")}</b> penalty pending</span><span class="pill absent"><b>${n("Missing slips")}</b> missing slips</span><span class="by" style="align-self:center">${finals.length} program${finals.length==1?"":"s"} count in this term</span>`:`<span class="by">No finished programs count toward clearance in this term yet.</span>`;
+$("#cl-count").textContent="Showing "+list.length+" of "+all.length+" students";
+$("#cl-table").innerHTML=list.length?`<tr><th>Student</th><th>Course and year</th><th>Slips</th><th>Late</th><th>Excused</th><th>Status</th><th>Missing</th></tr>`+
+list.map(o=>`<tr><td><button class="link" data-pf="${o.x.id}">${esc(o.x.name)}</button><br><small>${o.x.no}</small></td><td>${o.x.course}, year ${o.x.year}</td><td>${slipText(o.r)}</td><td>${o.r.late}</td><td>${o.r.excused}</td><td>${clearTag(o.r.status)}</td>
+<td><small>${o.r.missing.length?o.r.missing.slice(0,2).map(m=>esc(m.p.name)+" ("+m.slip+")").join(", ")+(o.r.missing.length>2?" and "+(o.r.missing.length-2)+" more":""):"—"}</small></td></tr>`).join(""):`<tr><td>No students match these filters.</td></tr>`;
+document.querySelectorAll("#cl-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"clear"))};
+$("#cl-t").onchange=e=>{cl.term=e.target.value;render()};
+$("#cl-q").oninput=e=>{cl.q=e.target.value;draw()};
+$("#cl-c").onchange=e=>{cl.course=e.target.value;draw()};
+$("#cl-y").onchange=e=>{cl.year=e.target.value;draw()};
+$("#cl-s").onchange=e=>{cl.status=e.target.value;draw()};
+$("#cl-o").onchange=e=>{cl.sort=e.target.value;draw()};
+$("#cl-x").onclick=()=>{cl={term,q:"",course:"",year:"",status:"",sort:"name"};render()};
+$("#cl-print").onclick=()=>shown.length?printClearanceList(shown,term):toast("There is nobody in the list to print.");
+$("#desk-go").onclick=()=>deskLookup($("#desk-in").value);
+$("#desk-in").onkeydown=e=>{if(e.key==="Enter")deskLookup(e.target.value)};
+$("#cam").onclick=toggleCam;
+draw();
+},
+
+hist(){
+$("#view").innerHTML=`<h1>History</h1><p class="sub">Every manual correction, excused absence and penalty, with what changed and why.</p>
+<div class="panel"><div class="filters"><label class="grow">Search<input id="h-q" placeholder="Student, program, or reason"></label>
+<label>Type<select id="h-t"><option value="">All changes</option><option value="att">Attendance corrections</option><option value="pen">Penalties</option></select></label>
+<label>From<input type="date" id="h-from"></label><label>To<input type="date" id="h-to"></label><button class="btn alt" id="h-x">Clear</button></div>
+<p class="sub" id="h-count"></p><div class="tablewrap"><table id="h-table"></table></div><p><button class="btn alt hide" id="h-more">Show more</button></p></div>`;
+$("#h-q").value=hf.q;$("#h-t").value=hf.type;$("#h-from").value=hf.from;$("#h-to").value=hf.to;
+const draw=()=>{
+const rows=changeLog.filter(e=>{const x=students.find(v=>v.id===e.student_id),p=programs.find(v=>v.id===e.program_id),d=e.at?new Date(e.at).toLocaleDateString("en-CA"):"";
+return matchScore(hf.q,[x&&x.name,x&&x.no,p&&p.name,e.action,e.old_value,e.new_value,e.reason].join(" "))>0&&(!hf.type||(hf.type==="pen")===/^Penalty/.test(e.action))&&(!hf.from||d>=hf.from)&&(!hf.to||d<=hf.to)}).sort((a,b)=>(b.at||"").localeCompare(a.at||""));
+$("#h-count").textContent="Showing "+Math.min(rows.length,hf.shown)+" of "+rows.length+" changes";
+$("#h-table").innerHTML=rows.length?`<tr><th>When</th><th>Student</th><th>Program</th><th>Change</th><th>Reason</th><th>By</th></tr>`+rows.slice(0,hf.shown).map(e=>{const x=students.find(v=>v.id===e.student_id),p=programs.find(v=>v.id===e.program_id);
+return `<tr><td class="nowrap">${e.at?new Date(e.at).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</td><td>${x?`<button class="link" data-pf="${x.id}">${esc(x.name)}</button>`:"—"}</td><td>${p?esc(p.name):"—"}</td>
+<td><b>${esc(e.action)}</b><br><small>${e.old_value?esc(e.old_value)+" → ":""}${esc(e.new_value||"")}</small></td><td>${esc(e.reason||"—")}</td><td>${esc(e.by_user||"—")}</td></tr>`}).join(""):`<tr><td>No changes match.</td></tr>`;
+$("#h-more").classList.toggle("hide",rows.length<=hf.shown);
+document.querySelectorAll("#h-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"hist"))};
+$("#h-q").oninput=e=>{hf.q=e.target.value;hf.shown=25;draw()};
+$("#h-t").onchange=e=>{hf.type=e.target.value;hf.shown=25;draw()};
+$("#h-from").onchange=e=>{hf.from=e.target.value;draw()};
+$("#h-to").onchange=e=>{hf.to=e.target.value;draw()};
+$("#h-more").onclick=()=>{hf.shown+=25;draw()};
+$("#h-x").onclick=()=>{hf={q:"",type:"",from:"",to:"",shown:25};views.hist()};
+draw();
+DB.loadLog().then(()=>{if(page==="hist"&&$("#h-table"))draw()}).catch(()=>{});
+},
+
+profile(){
+const s=students.find(x=>x.id===profId);if(!s){page=profBack||"dash";return render()}
+const tl=termsList(),term=tl.includes(profTerm)?profTerm:currentTerm();profTerm=term;
+const rep=slipReport(s,term),rows=termRows(s,term),pens=penalties.filter(x=>x.student_id===s.id&&x.term===term);
+const roleBadge=s.lead?`<span class="tag Completed">Lead officer</span>`:s.checker?`<span class="tag Present">SBO officer</span>`:`<span class="tag Excused">Student</span>`;
+const acct=!s.active?`<span class="tag Absent">Inactive${s.inactive_reason?" ("+esc(s.inactive_reason)+")":""}</span>`:s.pw?`<span class="tag Present">Active</span>`:`<span class="tag Late">Not activated</span>`;
+$("#view").innerHTML=`<button class="link back" id="pf-back">← Back</button>
+<div class="profhead">${avatarHtml(s.id,"xl")}<div><h1>${esc(s.name)}</h1><p class="sub" style="margin:0 0 6px">${s.no}, ${s.course} year ${s.year}${s.email?", "+esc(s.email):""}</p><p style="margin:0">${roleBadge} ${acct}</p></div>
+<div class="btns"><button class="btn alt" id="pf-edit">Edit details</button><button class="btn alt" id="pf-print">Print clearance slip</button></div></div>
+<div class="head"><h2>Term</h2><label><span class="sr">Term</span><select id="pf-term">${tl.map(t=>`<option>${esc(t)}</option>`).join("")}</select></label></div>
+<div class="grid"><div class="stat"><b>${slipText(rep)}</b><span>Slips collected</span></div><div class="stat"><b>${rep.late}</b><span>Late${rep.lateMin?" ("+fmtDur(rep.lateMin)+" in total)":""}</span></div><div class="stat"><b>${rep.absent}</b><span>Programs missed</span></div><div class="stat"><b>${rep.excused}</b><span>Excused</span></div><div class="stat"><b>${clearTag(rep.status)}</b><span>Clearance</span></div></div>
+<div class="panel"><h2>Missing slips</h2>${rep.missing.length?`<ul class="plain">${rep.missing.map(m=>`<li>${esc(m.p.name)}, ${m.slip} (${m.p.date})</li>`).join("")}</ul>${rep.settled?`<p class="hint">${rep.settled} slip${rep.settled==1?"":"s"} covered by settled penalties.</p>`:""}`:"<p>No missing slips for this term.</p>"}</div>
+<div class="panel"><div class="head"><h2>Penalties</h2>${rep.unresolved>0?`<button class="btn" id="pf-pen">Record a penalty</button>`:""}</div>${pens.length?pens.map(x=>`<div class="listrow"><div>${esc(x.note)}<br><small>Covers ${x.slips} slip${x.slips==1?"":"s"}, ${x.settled?"settled":"not settled yet"}</small></div><button class="btn alt" data-pt="${x.id}">${x.settled?"Mark not settled":"Mark settled"}</button></div>`).join(""):"<p>No penalties recorded for this term.</p>"}</div>
+<div class="panel"><h2>Programs</h2><div class="tablewrap"><table><tr><th>Program</th><th>Check-in</th><th>Check-out</th><th>Result</th><th>Note</th><th><span class="sr">Actions</span></th></tr>
+${rows.length?rows.map(x=>`<tr><td>${esc(x.p.name)}<br><small>${x.p.date}${x.p.counts===false?", not counted":""}</small></td><td>${x.inT}</td><td>${x.outT}</td><td>${resTag(x.result)}</td><td>${x.r&&x.r.remark?esc(x.r.remark):""}</td><td class="nowrap"><button class="btn alt" data-k="${x.p.id}">Correct</button></td></tr>`).join(""):`<tr><td colspan="6">No finished or running programs in this term yet.</td></tr>`}</table></div></div>`;
+$("#pf-term").value=term;$("#pf-term").onchange=e=>{profTerm=e.target.value;render()};
+$("#pf-back").onclick=()=>{page=profBack||"dash";render();window.scrollTo(0,0)};
+$("#pf-edit").onclick=()=>studentDialog(s);
+$("#pf-print").onclick=()=>printSlip(s,term);
+if($("#pf-pen"))$("#pf-pen").onclick=()=>penaltyDialog(s,term,()=>views.profile());
+document.querySelectorAll("#view [data-pt]").forEach(b=>b.onclick=()=>togglePenalty(penalties.find(x=>x.id==b.dataset.pt),()=>views.profile()));
+document.querySelectorAll("#view [data-k]").forEach(b=>b.onclick=()=>correctDialog(programs.find(x=>x.id==b.dataset.k),s,()=>views.profile()));
+hydratePhotos($("#view"));
+},
+
 attend(){
 if(attProg&&programs.some(x=>x.id==attProg))return attendDetail(programs.find(x=>x.id==attProg));
 attProg=null;
@@ -211,7 +334,7 @@ const cmp={new:(a,b)=>b.date.localeCompare(a.date)||(b.start||"").localeCompare(
 list.sort(cmp);
 $("#acount").textContent="Showing "+Math.min(list.length,af.shown)+" of "+list.length+" programs";
 $("#alist").innerHTML=list.length?list.slice(0,af.shown).map(programCard).join("")+(list.length>af.shown?`<button class="btn alt" id="a-more">Show more programs</button>`:""):`<div class="panel">No programs match. Try fewer words, or check the spelling.</div>`;
-document.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>{attProg=+b.dataset.v;ad={q:"",course:"",year:"",status:"",out:"",sort:"name"};render();window.scrollTo(0,0)});
+document.querySelectorAll("#view [data-v]").forEach(b=>b.onclick=()=>{attProg=+b.dataset.v;ad={q:"",course:"",year:"",status:"",out:"",sort:"name"};render();window.scrollTo(0,0)});
 const more=$("#a-more");if(more)more.onclick=()=>{af.shown+=10;drawList()}};
 // Suggestions that appear while typing (they allow small typos and partial words)
 let sug=[],act=-1;
@@ -251,7 +374,7 @@ ${p.status==="Ongoing"?`<button class="btn ${p.paused?"":"alt"}" data-pz="${p.id
 ${officers.map(o=>{const mine=Object.values(recs).filter(r=>r.by===o.no),last=mine.map(r=>r.in).sort().pop(),out=(recs[o.id]||{}).out;
 const can=p.paused?"Paused":o.lead?(out?"No, scanned out":"Yes, lead officer"):isPresent(p.id,o.id)?"Yes, scanned in at "+recs[o.id].in:"Not yet, waiting to be scanned in";
 return `<tr><td>${o.name}${o.lead?` <span class="tag Completed">Lead</span>`:""}</td><td>${can}</td><td>${mine.length}</td><td>${last||"—"}</td></tr>`}).join("")||`<tr><td colspan="4">No SBO officers yet. Make one on the Students page.</td></tr>`}</table></div></div>`}).join("")||`<div class="panel">No upcoming or ongoing programs.</div>`);
-document.querySelectorAll("[data-pz]").forEach(b=>b.onclick=async()=>{const p=programs.find(x=>x.id==b.dataset.pz);
+document.querySelectorAll("#view [data-pz]").forEach(b=>b.onclick=async()=>{const p=programs.find(x=>x.id==b.dataset.pz);
 try{await DB.setProgram(p.id,{paused:!p.paused});p.paused=!p.paused;render();toast(p.paused?"Scanning is paused for "+p.name+".":"Scanning resumed for "+p.name+".")}
 catch(e){toast("Couldn’t change that. Check the internet connection and try again.")}});
 },
@@ -277,21 +400,27 @@ if(forced){page=role==="checker"?"scan":"sdash";return render()}
 catch(e){m("Couldn’t save the new password. Check the internet connection and try again.")}}
 },
 sdash(){
-const done=programs.filter(p=>p.status==="Completed"),st=done.map(p=>status(p,me));
-const lateTotal=done.reduce((a,p)=>a+(((att[p.id]||{})[me.id]||{}).lateMin||0),0);
-const pres=st.filter(x=>x=="Present").length,late=st.filter(x=>x=="Late").length,abs=st.filter(x=>x=="Absent").length;
-const pct=done.length?Math.round((pres+late)/done.length*100):0;
-$("#view").innerHTML=`<h1>${me.name}</h1><p class="sub">${me.no} · ${me.course}, year ${me.year}</p>
+const tl=termsList(),term=tl.includes(stTerm)?stTerm:currentTerm();stTerm=term;
+const r=slipReport(me,term),pens=penalties.filter(x=>x.student_id===me.id&&x.term===term);
+$("#view").innerHTML=`<div class="profhead">${avatarHtml(me.id,"xl")}<div><h1>${esc(me.name)}</h1><p class="sub" style="margin:0">${me.no}, ${me.course}, year ${me.year}</p></div></div>
 ${me.recovery_hash?"":`<div class="notice">Set up your recovery code so you can reset your own password if you forget it. <button class="link" id="go-rc">Set it up</button></div>`}
-<div class="grid"><div class="stat"><b>${done.length}</b><span>Programs held</span></div><div class="stat"><b>${pres+late}</b><span>Attended</span></div>
-<div class="stat"><b>${late}</b><span>Late</span></div><div class="stat"><b>${fmtDur(lateTotal)}</b><span>Total time late</span></div><div class="stat"><b>${abs}</b><span>Absent</span></div></div>
-<div class="panel"><h2>Attendance rate: ${pct}%</h2><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+<div class="notice hide" id="ph-nudge">Add your photo so officers can see you when you are scanned. <button class="link" id="go-ph">Add it on the My QR code page</button></div>
+<div class="head"><h2>Term</h2><label><span class="sr">Term</span><select id="st-t">${tl.map(t=>`<option>${esc(t)}</option>`).join("")}</select></label></div>
+<div class="grid"><div class="stat"><b>${slipText(r)}</b><span>Slips collected</span></div><div class="stat"><b>${r.late}</b><span>Late</span></div><div class="stat"><b>${fmtDur(r.lateMin)}</b><span>Total time late</span></div><div class="stat"><b>${r.absent}</b><span>Programs missed</span></div><div class="stat"><b>${r.excused}</b><span>Excused</span></div></div>
+<div class="panel"><h2>Clearance: ${clearTag(r.status)}</h2>${r.missing.length?`<p>You are missing these slips:</p><ul class="plain">${r.missing.map(m=>`<li>${esc(m.p.name)}, ${m.slip} (${m.p.date})</li>`).join("")}</ul><p class="hint">Talk to the administrator if one of these is a mistake.</p>`:`<p>${r.programs?"You have every slip for this term.":"No programs have finished in this term yet."}</p>`}
+${pens.map(x=>`<p>Penalty: ${esc(x.note)} (${x.slips} slip${x.slips==1?"":"s"}), ${x.settled?"settled":"not settled yet"}.</p>`).join("")}</div>`;
+$("#st-t").value=term;$("#st-t").onchange=e=>{stTerm=e.target.value;render()};
 const g=$("#go-rc");if(g)g.onclick=()=>{page="spw";render()};
+$("#go-ph").onclick=()=>{page="sqr";render()};
+fetchPhoto(me.id).then(u=>{const n=$("#ph-nudge");if(!u&&n&&page==="sdash")n.classList.remove("hide")});
+hydratePhotos($("#view"));
 },
 sqr(){
 $("#view").innerHTML=`<h1>My QR code</h1><p class="sub">Show this to the scanner if you don’t have your school ID.</p>
+<div class="panel"><h2>Your photo</h2>${photoControl(me.id,true)}</div>
 <div class="panel" style="text-align:center"><div class="qrbox" id="qr"></div><p><b>${me.name}</b><br>${me.no}</p>
 <button class="btn" id="dl">Download QR code</button></div>`;
+bindPhoto(me.id);hydratePhotos($("#view"));
 new QRCode($("#qr"),{text:me.token,width:200,height:200});
 $("#dl").onclick=()=>{const c=$("#qr canvas"),i=$("#qr img"),a=document.createElement("a");a.href=c?c.toDataURL("image/png"):i.src;a.download="ncbi-qr-"+me.no+".png";a.click()};
 },
@@ -320,12 +449,12 @@ return total}
 const programHay=p=>[p.name,p.date,new Date(p.date+"T00:00:00").toLocaleDateString("en",{weekday:"long",month:"long",day:"numeric",year:"numeric"}),p.status,p.type==="inout"?"check-in check-out":"check-in"].join(" ");
 const byName=by=>by==="admin"?"Administrator":(students.find(v=>v.no===by)||{}).name||by;
 function progStats(p){
-const recs=att[p.id]||{},scanners={};let present=0,late=0,noOut=0;
-Object.values(recs).forEach(r=>{if(r.status==="Late")late++;else present++;if(p.type==="inout"&&r.in&&!r.out)noOut++;if(r.by)scanners[r.by]=(scanners[r.by]||0)+1});
+const recs=att[p.id]||{},scanners={};let present=0,late=0,noOut=0,excused=0;
+Object.values(recs).forEach(r=>{if(r.status==="Excused")excused++;else if(r.status==="Late")late++;else present++;if(p.type==="inout"&&r.in&&!r.out)noOut++;if(r.by)scanners[r.by]=(scanners[r.by]||0)+1});
 const missing=students.filter(x=>x.active&&!recs[x.id]).length;
-return{present,late,noOut,absent:p.status==="Completed"?missing:0,notYet:p.status==="Completed"?0:missing,scanners}}
+return{present,late,excused,noOut,absent:p.status==="Completed"?missing:0,notYet:p.status==="Completed"?0:missing,scanners}}
 function pills(p,t){
-return `<span class="pill ok"><b>${t.present}</b> on time</span><span class="pill late"><b>${t.late}</b> late</span>`+
+return `<span class="pill ok"><b>${t.present}</b> on time</span><span class="pill late"><b>${t.late}</b> late</span>`+(t.excused?`<span class="pill"><b>${t.excused}</b> excused</span>`:"")+
 (p.status==="Completed"?`<span class="pill absent"><b>${t.absent}</b> absent</span>`:`<span class="pill"><b>${t.notYet}</b> not yet scanned</span>`)+
 (p.type==="inout"?`<span class="pill"><b>${t.noOut}</b> ${p.status==="Completed"?"no check-out":"still inside"}</span>`:"")}
 function scannedBy(t){
@@ -347,7 +476,7 @@ $("#view").innerHTML=`<button class="link back" id="a-back">← All programs</bu
 <label class="grow">Search students<input id="d-q" placeholder="Name or student number"></label>
 <label>Course<select id="d-c"><option value="">All courses</option>${courses.map(c=>`<option>${c}</option>`).join("")}</select></label>
 <label>Year<select id="d-y"><option value="">All years</option>${years.map(y=>`<option value="${y}">Year ${y}</option>`).join("")}</select></label>
-<label>Status<select id="d-s"><option value="">All</option><option value="Present">On time</option><option value="Late">Late</option><option value="Absent">Absent</option>${p.status!=="Completed"?`<option value="none">Not yet scanned</option>`:""}</select></label>
+<label>Status<select id="d-s"><option value="">All</option><option value="Present">On time</option><option value="Late">Late</option><option value="Absent">Absent</option><option value="Excused">Excused</option>${p.status!=="Completed"?`<option value="none">Not yet scanned</option>`:""}</select></label>
 ${io?`<label>Check-out<select id="d-o"><option value="">All</option><option value="out">Checked out</option><option value="noout">No check-out</option></select></label>`:""}
 <label>Sort by<select id="d-so"><option value="name">Name A to Z</option><option value="namez">Name Z to A</option><option value="in">Time in, earliest</option><option value="inz">Time in, latest</option><option value="late">Most late</option></select></label>
 <button class="btn alt" id="d-x">Clear filters</button></div>
@@ -359,8 +488,10 @@ const rows=people.filter(x=>matchScore(ad.q,x.name+" "+x.no)>0&&(!ad.course||x.c
 const cmp={name:(a,b)=>a.name.localeCompare(b.name),namez:(a,b)=>b.name.localeCompare(a.name),in:(a,b)=>(T(a)||"99:99").localeCompare(T(b)||"99:99")||a.name.localeCompare(b.name),inz:(a,b)=>T(b).localeCompare(T(a))||a.name.localeCompare(b.name),late:(a,b)=>L(b)-L(a)||a.name.localeCompare(b.name)}[ad.sort];
 rows.sort(cmp);
 $("#d-count").textContent="Showing "+rows.length+" of "+people.length+" students";
-$("#d-table").innerHTML=rows.length?`<tr><th>Student</th><th>Course and year</th><th>Time in</th>${io?"<th>Time out</th>":""}<th>Status</th><th>Late by</th><th>Scanned by</th></tr>`+
-rows.map(x=>{const r=R(x),s=st(x);return `<tr><td><b>${x.name}</b><br><small>${x.no}</small></td><td>${x.course}, year ${x.year}</td><td>${r.in||"—"}</td>${io?`<td>${r.out||(r.in&&p.status==="Completed"?"No check-out":"—")}</td>`:""}<td>${s==="none"?"Not yet scanned":tag(s)}</td><td>${r.status==="Late"&&r.lateMin>0?fmtDur(r.lateMin):"—"}</td><td>${r.by?esc(byName(r.by)):"—"}</td></tr>`}).join(""):`<tr><td>No students match these filters.</td></tr>`};
+$("#d-table").innerHTML=rows.length?`<tr><th>Student</th><th>Course and year</th><th>Time in</th>${io?"<th>Time out</th>":""}<th>Status</th><th>Late by</th><th>Scanned by</th><th><span class="sr">Actions</span></th></tr>`+
+rows.map(x=>{const r=R(x),s=st(x);return `<tr><td><button class="link" data-pf="${x.id}">${esc(x.name)}</button><br><small>${x.no}</small></td><td>${x.course}, year ${x.year}</td><td>${r.in||"—"}</td>${io?`<td>${r.out||(r.in&&p.status==="Completed"?"No check-out":"—")}</td>`:""}<td>${s==="none"?"Not yet scanned":tag(s)}</td><td>${r.status==="Late"&&r.lateMin>0?fmtDur(r.lateMin):"—"}</td><td>${r.by?esc(byName(r.by)):"—"}</td><td class="nowrap">${p.status==="Upcoming"?"":`<button class="btn alt" data-k="${x.id}">Correct</button>`}</td></tr>`}).join(""):`<tr><td>No students match these filters.</td></tr>`;
+document.querySelectorAll("#d-table [data-k]").forEach(b=>b.onclick=()=>correctDialog(p,students.find(v=>v.id==b.dataset.k),()=>attendDetail(p)));
+document.querySelectorAll("#d-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"attend"))};
 $("#d-q").oninput=e=>{ad.q=e.target.value;draw()};
 $("#d-c").onchange=e=>{ad.course=e.target.value;draw()};
 $("#d-y").onchange=e=>{ad.year=e.target.value;draw()};
@@ -371,6 +502,197 @@ $("#d-x").onclick=()=>{ad={q:"",course:"",year:"",status:"",out:"",sort:"name"};
 $("#a-back").onclick=()=>{attProg=null;render();window.scrollTo(0,0)};
 draw()}
 
+// ---------- Terms, slips and clearance ----------
+// A "slip" is one scan: a check-in for every program, plus a check-out for check-out programs.
+// Late still counts as collected. Excused removes the program from what the student needs.
+function guessTerm(d){const y=+d.slice(0,4),m=+d.slice(5,7);return m>=8?"1st Semester "+y+"-"+(y+1):m<=5?"2nd Semester "+(y-1)+"-"+y:"Summer "+y}
+const termOf=p=>p.term||guessTerm(p.date);
+function termsList(){const last={};programs.forEach(p=>{const t=termOf(p);if(!last[t]||p.date>last[t])last[t]=p.date});return Object.keys(last).sort((a,b)=>last[b].localeCompare(last[a]))}
+const finalPrograms=term=>programs.filter(p=>termOf(p)===term&&p.counts!==false&&p.status==="Completed").sort((a,b)=>a.date.localeCompare(b.date));
+function currentTerm(){const tl=termsList();return tl.find(t=>finalPrograms(t).length)||tl[0]||""}
+function slipReport(s,term){
+const progs=finalPrograms(term),missing=[];let required=0,collected=0,attended=0,onTime=0,late=0,lateMin=0,absent=0,excused=0;
+progs.forEach(p=>{
+const r=(att[p.id]||{})[s.id],io=p.type==="inout";
+if(r&&r.status==="Excused"){excused++;return}
+required+=io?2:1;
+if(r&&r.in){collected++;attended++;if(r.status==="Late"){late++;lateMin+=r.lateMin||0}else onTime++}
+else{absent++;missing.push({p,slip:"check-in"})}
+if(io){if(r&&r.out)collected++;else missing.push({p,slip:"check-out"})}});
+const mine=penalties.filter(x=>x.student_id===s.id&&x.term===term);
+const settled=mine.filter(x=>x.settled).reduce((a,x)=>a+x.slips,0),pending=mine.filter(x=>!x.settled);
+const unresolved=Math.max(0,missing.length-settled);
+const status=pending.length?"Penalty pending":unresolved>0?"Missing slips":"Clear";
+return{required,collected,attended,onTime,late,lateMin,absent,excused,missing,settled,pending,unresolved,status,programs:progs.length}}
+const slipText=r=>r.required?r.collected+" of "+r.required:"No slips yet";
+const clearTag=t=>`<span class="tag ${t==="Clear"?"Present":t==="Missing slips"?"Absent":"Late"}">${t}</span>`;
+const resTag=t=>t==="Excused"?`<span class="tag Excused">Excused</span>`:t.startsWith("Late")?`<span class="tag Late">${t}</span>`:t==="On time"?`<span class="tag Present">On time</span>`:t==="Absent"?`<span class="tag Absent">Absent</span>`:t;
+// Every program of the term the student could have a result for (finished or running)
+function termRows(s,term){return programs.filter(p=>termOf(p)===term&&(p.status==="Completed"||p.status==="Ongoing")).sort((a,b)=>a.date.localeCompare(b.date)).map(p=>{
+const r=(att[p.id]||{})[s.id];
+const result=r&&r.status==="Excused"?"Excused":r&&r.in?(r.status==="Late"?"Late"+(r.lateMin?" ("+fmtDur(r.lateMin)+")":""):"On time"):p.status==="Completed"?"Absent":"Not yet scanned";
+return{p,r,result,inT:r&&r.in?r.in:"—",outT:p.type!=="inout"?"n/a":r&&r.out?r.out:(r&&r.in&&p.status==="Completed"?"No check-out":"—")}})}
+function groupStats(term){const g={};
+students.filter(x=>x.active).forEach(s=>{const k=s.course+" year "+s.year,r=slipReport(s,term),o=g[k]||(g[k]={name:k,students:0,attended:0,expected:0,onTime:0,absent:0,missing:0,clear:0});
+o.students++;o.attended+=r.attended;o.expected+=r.attended+r.absent;o.onTime+=r.onTime;o.absent+=r.absent;o.missing+=r.missing.length;if(r.status==="Clear")o.clear++});
+return Object.values(g).map(o=>({...o,rate:o.expected?o.attended/o.expected:null,punct:o.attended?o.onTime/o.attended:null}))}
+let dashTerm="",dashSort="rate",profId=null,profBack="dash",profTerm="",stTerm="",cl={term:"",q:"",course:"",year:"",status:"",sort:"name"},hf={q:"",type:"",from:"",to:"",shown:25};
+function openProfile(id,back){profId=id;profBack=back||page;page="profile";render();window.scrollTo(0,0)}
+function afterStudentChange(){if(page==="students")views.students();else render()}
+
+// Suggestions that appear under a search box while typing
+function typeahead(input,list,items,onPick){
+let cur=[],act=-1;const li=list.slice(1);
+const close=()=>{const l=$(list),i=$(input);if(!l||!i)return;l.classList.add("hide");i.setAttribute("aria-expanded","false");i.removeAttribute("aria-activedescendant");act=-1};
+const draw=()=>{const l=$(list),i=$(input);if(!l||!i)return;cur=i.value.trim()?items(i.value).slice(0,6):[];if(!cur.length)return close();
+l.innerHTML=cur.map((x,n)=>`<li role="option" id="${li}-${n}" data-i="${n}" aria-selected="${n===act}">${esc(x.title)}<small>${esc(x.sub)}</small></li>`).join("");
+l.classList.remove("hide");i.setAttribute("aria-expanded","true");if(act>=0)i.setAttribute("aria-activedescendant",li+"-"+act);
+l.querySelectorAll("li").forEach(el=>el.onmousedown=e=>{e.preventDefault();pick(+el.dataset.i)})};
+const pick=n=>{const x=cur[n];if(!x)return;close();onPick(x)};
+const inp=$(input);
+inp.addEventListener("input",()=>{act=-1;draw()});
+inp.addEventListener("keydown",e=>{
+if(e.key==="ArrowDown"&&cur.length){e.preventDefault();act=(act+1)%cur.length;draw()}
+else if(e.key==="ArrowUp"&&cur.length){e.preventDefault();act=(act-1+cur.length)%cur.length;draw()}
+else if(e.key==="Enter"){if(act>=0){e.preventDefault();pick(act)}else if(cur.length===1){e.preventDefault();pick(0)}else close()}
+else if(e.key==="Escape")close()});
+inp.addEventListener("blur",()=>setTimeout(close,150))}
+
+// Clearance desk: look a student up by QR code or student number
+function deskLookup(code){
+const q=String(code||"").trim(),box=$("#desk-res");if(!box)return;
+const x=students.find(v=>v.token===q.toUpperCase()||v.no===q);
+if(!x){box.innerHTML=`<p class="err" role="alert">No student matches “${esc(q)}”.</p>`;return}
+stopCam();
+const term=cl.term||currentTerm(),r=slipReport(x,term);
+box.innerHTML=`<div class="deskcard">${avatarHtml(x.id,"lg")}<div><h3>${esc(x.name)}</h3><small>${x.no}, ${x.course} year ${x.year}</small>
+<p style="margin:8px 0 4px"><b>${slipText(r)} slips</b> ${clearTag(r.status)}</p>
+<p style="margin:0 0 10px">${r.missing.length?"Missing: "+r.missing.map(m=>esc(m.p.name)+" ("+m.slip+")").join(", "):"No missing slips."}</p>
+<button class="btn" id="desk-open">Open profile</button></div></div>`;
+hydratePhotos(box);$("#desk-open").onclick=()=>openProfile(x.id,"clear")}
+
+// ---------- Photos: small, square, and shrunk on the device before saving ----------
+const AVATAR='<svg viewBox="0 0 64 64" role="img" aria-label="No photo yet"><rect width="64" height="64" fill="#dcb57c"/><circle cx="32" cy="25" r="11" fill="#3c0120"/><path d="M10 64c0-14 10-22 22-22s22 8 22 22z" fill="#3c0120"/></svg>';
+const avatarHtml=(id,cls)=>{const u=photos[id];return `<span class="avatar ${cls||""}" data-ph="${id}">${u?`<img src="${u}" alt="">`:AVATAR}</span>`};
+async function fetchPhoto(id){if(id in photos)return photos[id];try{photos[id]=(await DB.getPhoto(id))||false}catch(e){photos[id]=false}return photos[id]}
+function hydratePhotos(root){(root||document).querySelectorAll("[data-ph]").forEach(async el=>{const u=await fetchPhoto(+el.dataset.ph);if(u&&el.isConnected)el.innerHTML=`<img src="${u}" alt="">`})}
+function loadImage(file){return new Promise((ok,no)=>{const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{URL.revokeObjectURL(u);ok(i)};i.onerror=()=>{URL.revokeObjectURL(u);no(new Error("unreadable"))};i.src=u})}
+async function processPhoto(file){
+const bad=m=>Object.assign(new Error(m),{friendly:true});
+if(!file||!/^image\//.test(file.type))throw bad("Choose an image file, such as a JPG or PNG.");
+if(file.size>15*1024*1024)throw bad("That file is too large. Choose a photo under 15 MB.");
+let img;try{img=await loadImage(file)}catch(e){throw bad("That file isn’t a photo we can read. Try a JPG or PNG.")}
+const S=256,c=document.createElement("canvas");c.width=c.height=S;
+const g=c.getContext("2d"),side=Math.min(img.naturalWidth,img.naturalHeight);
+g.fillStyle="#fff";g.fillRect(0,0,S,S);
+g.drawImage(img,(img.naturalWidth-side)/2,(img.naturalHeight-side)/2,side,side,0,0,S,S);
+let q=.85,url=c.toDataURL("image/jpeg",q);
+while(url.length>80000&&q>.35){q-=.1;url=c.toDataURL("image/jpeg",q)}
+if(url.length>120000)throw bad("That photo is too detailed to shrink enough. Try a different one.");
+return url}
+const photoControl=(id,mine)=>`<div class="photo-ctl">${avatarHtml(id,"xl")}<div><button type="button" class="btn alt" id="ph-btn">Upload photo</button><input type="file" id="ph-file" accept="image/*" class="hide">
+<p class="hint">Use a clear photo of ${mine?"your":"the student’s"} face. It is shrunk to a small square (256 pixels), so it takes very little space.</p><p class="err" id="ph-err" role="alert"></p></div></div>`;
+function bindPhoto(id){
+$("#ph-btn").onclick=()=>$("#ph-file").click();
+$("#ph-file").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
+const er=t=>{$("#ph-err").textContent=t};er("");
+try{const u=await processPhoto(f);await DB.setPhoto(id,u);photos[id]=u;document.querySelectorAll('[data-ph="'+id+'"]').forEach(el=>{el.innerHTML=`<img src="${u}" alt="">`});toast("Photo saved.")}
+catch(x){er(x.friendly?x.message:"Couldn’t save the photo. Check the internet connection and try again.")}}}
+
+// ---------- History log, corrections, penalties ----------
+async function logChange(p,s,action,oldV,newV,reason){
+const e={program_id:p?p.id:null,student_id:s.id,action,old_value:oldV,new_value:newV,reason,by_user:"Administrator",at:new Date().toISOString()};
+const row=await DB.addLog(e);changeLog.unshift({...e,...(row||{})})}
+function describeRec(p,r){
+if(!r)return p.status==="Completed"?"Absent (no record)":"No record";
+if(r.status==="Excused")return "Excused"+(r.remark?": "+r.remark:"");
+return (r.status==="Late"?"Late":"On time")+", in "+r.in+(r.lateMin>0?" ("+fmtDur(r.lateMin)+" late)":"")+(r.out?", out "+r.out:"")}
+
+// Fix one student's result for one program. A reason is always required, and the change is logged.
+function correctDialog(p,s,after){
+if(role!=="admin"||!p||!s)return;
+const r=(att[p.id]||{})[s.id]||null,io=p.type==="inout",start=r&&r.status==="Excused"?"excused":"attended";
+dialog(`<form class="dform"><h2>Correct attendance</h2>
+<p><b>${esc(s.name)}</b>, ${esc(p.name)} (${p.date})<br><small>Now: ${esc(describeRec(p,r))}</small></p>
+<label>Result<select id="cr-res"><option value="attended">Attended</option><option value="excused">Excused absence</option><option value="absent">Absent (no attendance)</option></select></label>
+<div id="cr-att"><div class="two"><label>Time in<input type="time" id="cr-in"></label>${io?`<label>Time out (optional)<input type="time" id="cr-out"></label>`:""}</div>
+<p class="hint" id="cr-late"></p><label class="check hide" id="cr-wl"><input type="checkbox" id="cr-waive"> Don’t count the lateness</label></div>
+<label>Reason (required)<input id="cr-reason" placeholder="e.g. Phone battery died, student was at the venue" autocomplete="off"></label>
+<p class="err" id="cr-err" role="alert"></p>
+<div class="dbtn"><button type="button" class="btn alt" id="cr-c">Cancel</button><button type="submit" class="btn">Save correction</button></div></form>`,d=>{
+$("#cr-res").value=r?(r.status==="Excused"?"excused":r.in?"attended":"attended"):"attended";
+$("#cr-in").value=r&&r.in?r.in:p.start;if(io&&r&&r.out)$("#cr-out").value=r.out;
+const err=t=>{$("#cr-err").textContent=t};
+const sync=()=>{const att_=$("#cr-res").value==="attended";$("#cr-att").classList.toggle("hide",!att_);
+if(att_){const t=$("#cr-in").value,lm=t?lateMin(t,p.lateAfter):0;
+$("#cr-late").textContent=!t?"":lm>0?"That is "+fmtDur(lm)+" after the on-time cutoff, so it will be marked Late.":"That is on time.";
+$("#cr-wl").classList.toggle("hide",lm<=0)}};
+$("#cr-res").onchange=sync;$("#cr-in").oninput=sync;sync();
+$("#cr-c").onclick=()=>d.close();
+d.querySelector("form").onsubmit=async e=>{e.preventDefault();
+const res=$("#cr-res").value,reason=$("#cr-reason").value.trim(),old=describeRec(p,r);
+if(reason.length<3)return err("Enter a reason so the change can be explained later.");
+let row=null,action;
+if(res==="attended"){
+const tin=$("#cr-in").value,tout=io?$("#cr-out").value:"";
+if(!tin)return err("Enter the time the student checked in.");
+if(tout&&tout<tin)return err("The check-out time can’t be before the check-in time.");
+const lm=$("#cr-waive").checked?0:lateMin(tin,p.lateAfter);
+row={in:tin,out:tout||null,status:lm>0?"Late":"Present",lateMin:lm,by:(r&&r.by)||"admin",remark:reason};action="Corrected attendance"}
+else if(res==="excused"){row={in:null,out:null,status:"Excused",lateMin:0,by:"admin",remark:reason};action="Marked excused"}
+else{if(!r)return err("This student already has no attendance record for this program.");action="Marked absent"}
+try{
+if(row){await DB.upsertAttendance(p.id,s.id,row);att[p.id][s.id]=row}
+else{await DB.removeAttendance(p.id,s.id);delete att[p.id][s.id]}
+await logChange(p,s,action,old,describeRec(p,row),reason);
+d.close();toast("Saved. The change is in the history log.");if(after)after()}
+catch(er){err("Couldn’t save the correction. Check the internet connection and try again.")}}})}
+
+function penaltyDialog(s,term,after){
+if(role!=="admin")return;
+const rep_=slipReport(s,term);
+dialog(`<form class="dform"><h2>Record a penalty</h2>
+<p><b>${esc(s.name)}</b>, ${esc(term)}<br><small>${rep_.unresolved} missing slip${rep_.unresolved==1?"":"s"} not yet covered by a settled penalty.</small></p>
+<label>Penalty decided<input id="pn-note" placeholder="e.g. 2 hours of community service" autocomplete="off"></label>
+<label>Missing slips it covers<input type="number" id="pn-slips" min="1" value="${Math.max(1,rep_.unresolved)}"></label>
+<p class="err" id="pn-err" role="alert"></p>
+<div class="dbtn"><button type="button" class="btn alt" id="pn-c">Cancel</button><button type="submit" class="btn">Record penalty</button></div></form>`,d=>{
+$("#pn-c").onclick=()=>d.close();
+d.querySelector("form").onsubmit=async e=>{e.preventDefault();
+const note=$("#pn-note").value.trim(),slips=+$("#pn-slips").value;
+if(!note)return $("#pn-err").textContent="Describe the penalty.";
+if(!Number.isInteger(slips)||slips<1)return $("#pn-err").textContent="Enter how many missing slips it covers.";
+try{const row=await DB.addPenalty({student_id:s.id,term,note,slips,settled:false});penalties.push(row);
+await logChange(null,s,"Penalty recorded","",note+" ("+slips+" slip"+(slips==1?"":"s")+")","Term: "+term);
+d.close();toast("Penalty recorded.");if(after)after()}
+catch(er){$("#pn-err").textContent="Couldn’t save the penalty. Check the internet connection and try again."}}})}
+async function togglePenalty(pen,after){
+const s=students.find(x=>x.id===pen.student_id),on=!pen.settled;
+try{await DB.setPenalty(pen.id,{settled:on,settled_at:on?new Date().toISOString():null});pen.settled=on;
+await logChange(null,s,on?"Penalty settled":"Penalty reopened","",pen.note,"Term: "+pen.term);
+toast(on?"Marked as settled.":"Marked as not settled.");if(after)after()}
+catch(er){toast("Couldn’t save that change. Try again.")}}
+
+// ---------- Printing ----------
+function printHtml(inner){
+const old=$("#sheet");if(old)old.remove();
+const sh=document.createElement("div");sh.id="sheet";sh.innerHTML=inner;document.body.appendChild(sh);
+window.addEventListener("afterprint",()=>{document.body.classList.remove("printing");sh.remove()},{once:true});
+document.body.classList.add("printing");
+try{window.print()}catch(e){document.body.classList.remove("printing");sh.remove();toast("Printing isn’t available here. Open the site in its own browser tab and try again.")}}
+function printSlip(s,term){
+const r=slipReport(s,term),rows=termRows(s,term);
+printHtml(`<section class="sheet-sec"><h2>Clearance slip</h2><p><b>${esc(s.name)}</b>, ${s.no}, ${s.course} year ${s.year}<br>Term: ${esc(term)}</p>
+<table><tr><th>Program</th><th>Date</th><th>Check-in</th><th>Check-out</th><th>Result</th></tr>
+${rows.map(x=>`<tr><td>${esc(x.p.name)}${x.p.counts===false?" (not counted)":""}</td><td>${x.p.date}</td><td>${x.inT}</td><td>${x.outT}</td><td>${x.result}</td></tr>`).join("")}</table>
+<p><b>Slips: ${slipText(r)}.</b> ${r.excused?r.excused+" excused. ":""}Status: ${r.status}${r.settled&&!r.unresolved&&r.missing.length?" (penalty settled)":""}.</p>
+<p>Admin signature: ______________________ &nbsp;&nbsp; Date: ______________</p></section>`)}
+function printClearanceList(items,term){
+const g={};items.forEach(o=>{const k=o.x.course+", year "+o.x.year;(g[k]=g[k]||[]).push(o)});
+printHtml(Object.keys(g).sort().map(k=>`<section class="sheet-sec"><h2>Clearance list: ${k}</h2><p>${esc(term)}</p>
+<table><tr><th>Student no.</th><th>Name</th><th>Slips</th><th>Missing</th><th>Status</th><th>Signature</th></tr>
+${g[k].sort((a,b)=>a.x.name.localeCompare(b.x.name)).map(o=>`<tr><td>${o.x.no}</td><td>${esc(o.x.name)}</td><td>${slipText(o.r)}</td><td>${o.r.missing.length?o.r.missing.map(m=>esc(m.p.name)+" ("+m.slip+")").join(", "):"—"}</td><td>${o.r.status}</td><td></td></tr>`).join("")}</table></section>`).join(""))}
+
 // ---------- Program details: validate, save, re-mark ----------
 let attProg=null;
 function checkProgram(f){
@@ -380,46 +702,53 @@ if(f.end<=f.start)return "The program must end after it starts.";
 if(f.lateAfter<f.open||f.lateAfter>f.start)return "“On time until” must be between the time attendance opens and the time the program starts.";
 return ""}
 // One popup for creating a program and for editing it.
-//   Upcoming: everything can be changed.   Started: only the name, end time and on-time cutoff.
+//   Upcoming: everything can be changed.   Started: name, end time, on-time cutoff, term, clearance.
+//   Finished: only the term and whether it counts toward clearance.
 function programDialog(p){
 if(role!=="admin")return;
-const edit=Boolean(p),live=edit&&p.status==="Ongoing",lock=live?"disabled":"";
-const ed=p||{name:"",date:"",type:"in",open:"09:00",start:"10:00",end:"12:00",lateAfter:"09:50"};
-let minutes=Math.max(0,mins(ed.start)-mins(ed.lateAfter)),confirmed=false;   // minutes before the start that still count as on time
+const edit=Boolean(p),live=edit&&p.status==="Ongoing",done=edit&&p.status==="Completed",lock=(live||done)?"disabled":"",lockAll=done?"disabled":"";
+const ed=p||{name:"",date:"",type:"in",open:"09:00",start:"10:00",end:"12:00",lateAfter:"09:50",term:termsList()[0]||"",counts:true};
+let minutes=Math.max(0,mins(ed.start)-mins(ed.lateAfter)),confirmed=false,termTouched=edit;   // minutes before the start that still count as on time
 const options=MINUTES.includes(minutes)?MINUTES:[...MINUTES,minutes].sort((a,b)=>a-b);
 dialog(`<form class="dform" id="pf"><h2>${edit?"Edit program":"New program"}</h2>
-${live?`<p class="notice">This program has started, so you can only change its name, end time and on-time cutoff.</p>`:""}
-<label>Name<input id="pg-name" value="${esc(ed.name)}" placeholder="e.g. Christmas party"></label>
+${live?`<p class="notice">This program has started, so some details can no longer be changed.</p>`:""}${done?`<p class="notice">This program is finished, so you can only change its term and whether it counts toward clearance.</p>`:""}
+<label>Name<input id="pg-name" value="${esc(ed.name)}" placeholder="e.g. Christmas party" ${lockAll}></label>
 <label>Date<input type="date" id="pg-date" value="${ed.date}" ${lock}></label>
 <fieldset class="modes" ${lock}><legend>How is attendance taken?</legend>
 <label class="radio"><input type="radio" name="pg-type" value="in" ${ed.type==="in"?"checked":""}><span><b>Check-in only</b> (recommended)<br><small>One scan when students arrive. Fast, with shorter lines.</small></span></label>
 <label class="radio"><input type="radio" name="pg-type" value="inout" ${ed.type==="inout"?"checked":""}><span><b>Check-in and check-out</b><br><small>Also scan when students leave. Use it when staying until the end matters.</small></span></label></fieldset>
 <div class="three"><label>Attendance opens<input type="time" id="pg-open" value="${ed.open}" ${lock}></label>
 <label>Program starts<input type="time" id="pg-start" value="${ed.start}" ${lock}></label>
-<label>Program ends<input type="time" id="pg-end" value="${ed.end}"></label></div>
+<label>Program ends<input type="time" id="pg-end" value="${ed.end}" ${lockAll}></label></div>
 <div class="field"><span class="lbl">On time if students scan up to this long before the program starts</span>
 <div class="carousel"><button type="button" class="car-btn" id="car-l" aria-label="Show shorter times">‹</button>
 <div class="chipscroll" id="pg-chips" role="radiogroup" aria-label="Minutes before the program starts">${options.map(m=>`<button type="button" role="radio" class="chip" data-m="${m}">${m?m+" min":"At start"}</button>`).join("")}</div>
 <button type="button" class="car-btn" id="car-r" aria-label="Show longer times">›</button></div>
 <p class="hint" id="pg-sum"></p></div>
+<div class="two"><label>School term<input id="pg-term" list="pg-terms" value="${esc(edit?termOf(p):ed.term)}" placeholder="e.g. 1st Semester 2026-2027" autocomplete="off"><datalist id="pg-terms">${termsList().map(t=>`<option value="${esc(t)}">`).join("")}</datalist></label>
+<label class="check" style="align-self:end"><input type="checkbox" id="pg-counts" ${ed.counts!==false?"checked":""}> Counts toward clearance</label></div>
+<p class="hint">Clearance covers one term at a time. Turn off “Counts toward clearance” for optional events, so students aren’t marked as missing slips for them.</p>
 <p class="err" id="pg-err" role="alert"></p>
 <div class="dbtn"><button type="button" class="btn alt" id="pg-cancel">Cancel</button><button type="submit" class="btn" id="pg-save">${edit?"Save changes":"Create program"}</button></div></form>`,d=>{
 const chips=[...d.querySelectorAll(".chip")],err=t=>{$("#pg-err").textContent=t};
 const resetConfirm=()=>{if(confirmed){confirmed=false;$("#pg-save").textContent=edit?"Save changes":"Create program";err("")}};
 const refresh=()=>{
 const st=$("#pg-start").value,op=$("#pg-open").value,ok=m=>Boolean(st&&op)&&mins(st)-m>=mins(op);
-if(!ok(minutes)){const valid=chips.map(c=>+c.dataset.m).filter(ok),smaller=valid.filter(v=>v<=minutes);if(valid.length)minutes=smaller.length?Math.max(...smaller):Math.min(...valid)}
-chips.forEach(c=>{const m=+c.dataset.m;c.disabled=!ok(m);c.setAttribute("aria-checked",String(m===minutes));c.classList.toggle("on",m===minutes)});
+if(!done&&!ok(minutes)){const valid=chips.map(c=>+c.dataset.m).filter(ok),smaller=valid.filter(v=>v<=minutes);if(valid.length)minutes=smaller.length?Math.max(...smaller):Math.min(...valid)}
+chips.forEach(c=>{const m=+c.dataset.m;c.disabled=done||!ok(m);c.setAttribute("aria-checked",String(m===minutes));c.classList.toggle("on",m===minutes)});
 $("#pg-sum").textContent=ok(minutes)?"Students scanned up to "+fmtTime(hhmm(mins(st)-minutes))+" are on time. Anyone after that is still recorded, but marked late, with how late they were.":"Set the times the program opens and starts first."};
 chips.forEach(c=>c.onclick=()=>{minutes=+c.dataset.m;resetConfirm();refresh()});
 $("#pg-open").oninput=()=>{resetConfirm();refresh()};$("#pg-start").oninput=()=>{resetConfirm();refresh()};
+$("#pg-date").oninput=()=>{const v=$("#pg-date").value;if(!termTouched&&v)$("#pg-term").value=guessTerm(v)};
+$("#pg-term").oninput=()=>{termTouched=true};
 $("#car-l").onclick=()=>$("#pg-chips").scrollBy({left:-180,behavior:"smooth"});
 $("#car-r").onclick=()=>$("#pg-chips").scrollBy({left:180,behavior:"smooth"});
 $("#pg-cancel").onclick=()=>d.close();
 refresh();
 $("#pf").onsubmit=async e=>{e.preventDefault();
-const f={name:$("#pg-name").value.trim(),date:$("#pg-date").value,type:(d.querySelector('input[name="pg-type"]:checked')||{}).value||"in",open:$("#pg-open").value,start:$("#pg-start").value,end:$("#pg-end").value};
+const f={name:$("#pg-name").value.trim(),date:$("#pg-date").value,type:(d.querySelector('input[name="pg-type"]:checked')||{}).value||"in",open:$("#pg-open").value,start:$("#pg-start").value,end:$("#pg-end").value,counts:$("#pg-counts").checked};
 f.lateAfter=f.start?hhmm(Math.max(0,mins(f.start)-minutes)):"";
+f.term=$("#pg-term").value.trim()||(f.date?guessTerm(f.date):"");
 const bad=checkProgram(f);if(bad)return err(bad);
 if((!edit||f.date!==p.date)&&f.date<new Date().toLocaleDateString("en-CA"))return err("Choose today or a later date.");
 try{
@@ -463,6 +792,7 @@ catch(er){toast("Couldn’t cancel the program. Try again.")}}})}
 // After the cutoff changes, re-mark each record from the time the student was scanned
 async function remark(p){
 for(const [sid,rec] of Object.entries(att[p.id]||{})){
+if(!rec.in||rec.status==="Excused")continue;
 const lm=lateMin(rec.in,p.lateAfter),st=lm>0?"Late":"Present";
 if(rec.status!==st||(rec.lateMin||0)!==lm){await DB.setAttendance(p.id,sid,{status:st,late_minutes:lm});rec.status=st;rec.lateMin=lm}}}
 
@@ -483,7 +813,8 @@ if(role!=="admin")return;
 closeMenu();
 const x=students.find(v=>v.id==id),m=document.createElement("div");
 m.id="rm";m.setAttribute("role","menu");
-m.innerHTML=`<button role="menuitem" data-a="edit">View or edit details</button>
+m.innerHTML=`<button role="menuitem" data-a="stats">View stats and clearance</button>
+<button role="menuitem" data-a="edit">View or edit details</button>
 <button role="menuitem" data-a="sbo">${x.checker?"Remove SBO officer":"Make SBO officer"}</button>
 ${x.checker?`<button role="menuitem" data-a="lead">${x.lead?"Remove lead status":"Make lead officer"}</button>`:""}
 <button role="menuitem" data-a="reset">${x.pw?"Reset password":"New activation code"}</button><hr>
@@ -503,6 +834,7 @@ window.addEventListener("scroll",closeMenu,true);
 async function rowAction(a,x){
 if(role!=="admin")return;
 const fail=()=>toast("Couldn’t save that change. Check the internet connection and try again.");
+if(a==="stats")return openProfile(x.id,"students");
 if(a==="edit")return studentDialog(x);
 if(a==="sbo"){const on=!x.checker;try{await DB.setStudent(x.id,on?{checker:true}:{checker:false,lead:false});x.checker=on;if(!on)x.lead=false;views.students();toast(x.name+(on?" is now an SBO officer.":" is no longer an SBO officer."))}catch(e){fail()}return}
 if(a==="lead"){const on=!x.lead;try{await DB.setStudent(x.id,{lead:on,checker:true});x.lead=on;x.checker=true;views.students();toast(x.name+(on?" is now a lead officer.":" is no longer a lead officer."))}catch(e){fail()}return}
@@ -532,12 +864,13 @@ dialog(`<form class="dform" id="sf"><h2>${edit?"Student details":"Add student"}<
 <div class="two"><label>Year level<select id="sd-year">${[1,2,3,4].map(y=>`<option ${edit&&x.year===y?"selected":""}>${y}</option>`).join("")}</select></label>
 <label>Email (optional)<input id="sd-email" type="email" value="${v("email")}"></label></div>
 <p class="hint">The email is used only for verification codes and attendance receipts. Leave it empty if the student hasn’t agreed to share it.</p>
-${edit?`<p class="hint">The student number can’t be changed after the account is created.</p>`:`<label>Role<select id="sd-role"><option value="student">Student</option><option value="sbo">SBO officer</option><option value="lead">Lead officer</option></select></label>
+${edit?photoControl(x.id,false)+`<p class="hint">The student number can’t be changed after the account is created.</p>`:`<label>Role<select id="sd-role"><option value="student">Student</option><option value="sbo">SBO officer</option><option value="lead">Lead officer</option></select></label>
 <p class="hint">Lead officers can scan as soon as attendance opens and scan other officers in. SBO officers can scan once they have been scanned in.</p>
 <p class="hint">The student gets an activation code to choose their own password. You’ll see the code right after you add them.</p>`}
 <p class="err" id="sd-err" role="alert"></p>
 <div class="dbtn"><button type="button" class="btn alt" id="sd-cancel">Cancel</button><button type="submit" class="btn">${edit?"Save changes":"Add student"}</button></div></form>`,d=>{
 const err=t=>{$("#sd-err").textContent=t};
+if(edit){bindPhoto(x.id);hydratePhotos(d)}
 $("#sd-cancel").onclick=()=>d.close();
 $("#sf").onsubmit=async e=>{e.preventDefault();
 const first=$("#sd-first").value.trim(),last=$("#sd-last").value.trim(),no=edit?x.no:$("#sd-no").value.trim(),course=$("#sd-course").value.trim().toUpperCase(),year=+$("#sd-year").value,email=$("#sd-email").value.trim();
@@ -549,8 +882,8 @@ try{
 if(edit){await DB.setStudent(x.id,f);Object.assign(x,f);toast("Saved changes for "+name+".")}
 else{let token;do{token="NCBI-"+Math.random().toString(16).slice(2,8).toUpperCase()}while(students.some(v=>v.token===token));
 const row=await DB.addStudent({...f,no,token,active:true,checker:$("#sd-role").value!=="student",lead:$("#sd-role").value==="lead",claim_code:newCode()});
-students.push(row);views.students();return showCode(d,row,"Account created")}
-d.close();views.students();
+students.push(row);afterStudentChange();return showCode(d,row,"Account created")}
+d.close();afterStudentChange();
 }catch(er){err("Couldn’t save. Check the internet connection and try again.")}}});
 }
 
@@ -667,16 +1000,11 @@ $("#p-go").onclick=()=>printSheet(pick())})}
 
 function printSheet(list){
 const groups={};list.forEach(x=>{const g=x.course+", year "+x.year;(groups[g]=groups[g]||[]).push(x)});
-const site=location.href.split("#")[0],old=$("#sheet");if(old)old.remove();
-const sh=document.createElement("div");sh.id="sheet";
-sh.innerHTML=Object.keys(groups).sort().map(g=>`<section class="sheet-sec"><h2>${g}</h2>
+const site=location.href.split("#")[0];
+printHtml(Object.keys(groups).sort().map(g=>`<section class="sheet-sec"><h2>${g}</h2>
 <p>Activation codes for the class representative. Give each student their code. To activate: open <b>${site}</b>, choose “Activate your account”, enter your student number and your code, then choose a password. Keep your code private. Students marked “Activated” already have their password.</p>
 <table><tr><th>Student no.</th><th>Name</th><th>Activation code</th><th>Received</th></tr>
-${groups[g].sort((a,b)=>a.name.localeCompare(b.name)).map(x=>`<tr><td>${x.no}</td><td>${x.name}</td><td><b>${x.claim_code||"none"}</b></td><td>${x.pw?"Activated":`<span class="box"></span>`}</td></tr>`).join("")}</table></section>`).join("");
-document.body.appendChild(sh);
-window.addEventListener("afterprint",()=>{document.body.classList.remove("printing");sh.remove()},{once:true});
-document.body.classList.add("printing");
-try{window.print()}catch(e){document.body.classList.remove("printing");sh.remove();toast("Printing isn’t available here. Open the site in its own browser tab and try again.")}}
+${groups[g].sort((a,b)=>a.name.localeCompare(b.name)).map(x=>`<tr><td>${x.no}</td><td>${x.name}</td><td><b>${x.claim_code||"none"}</b></td><td>${x.pw?"Activated":`<span class="box"></span>`}</td></tr>`).join("")}</table></section>`).join(""))}
 
 // ---------- Scan logic ----------
 async function doScan(token){
@@ -708,7 +1036,7 @@ if(navigator.vibrate)navigator.vibrate(r.cls=="bad"?[80,60,80]:60);
 }
 
 // ---------- Camera scanner ----------
-let cam=null,lastCode="",lastAt=0;
+let cam=null,camHandler=null,lastCode="",lastAt=0;
 async function toggleCam(){
 if(cam)return stopCam();
 if(!window.Html5Qrcode)return alert("The camera library didn’t load. Check the internet connection.");
@@ -717,7 +1045,7 @@ cam=new Html5Qrcode("reader");
 try{
 await cam.start({facingMode:"environment"},{fps:10,qrbox:{width:220,height:220}},code=>{
 if(code===lastCode&&Date.now()-lastAt<3000)return; // ignore repeat reads of the same card
-lastCode=code;lastAt=Date.now();doScan(code.trim())},()=>{});
+lastCode=code;lastAt=Date.now();(camHandler||doScan)(code.trim())},()=>{});
 $("#cam").textContent="Stop camera";
 }catch(e){cam=null;$("#reader").classList.add("hide");alert("Can’t open the camera. Allow camera access, and open the site over https.")}
 }
@@ -727,7 +1055,8 @@ const c=cam;cam=null;c.stop().then(()=>c.clear()).catch(()=>{});
 const r=$("#reader"),b=$("#cam");if(r)r.classList.add("hide");if(b)b.textContent="Start camera";
 }
 function showRes(r){const e=$("#res");if(!e)return;e.className="result "+r.cls;
-e.innerHTML=`<h3>${r.title}</h3><p>${r.msg}</p>${r.s?`<p class="big">${r.s.no} · ${r.s.course}</p>`:""}${r.act?`<p class="big">${r.p.name} · ${r.act} at ${r.t}</p>`:""}`}
+e.innerHTML=`<div class="resrow">${r.s?avatarHtml(r.s.id,"lg"):`<span class="avatar lg">${AVATAR}</span>`}<div><h3>${r.title}</h3><p>${r.msg}</p>${r.s?`<p class="big">${r.s.no} · ${r.s.course}, year ${r.s.year}</p>`:""}${r.act?`<p class="big">${r.p.name} · ${r.act} at ${r.t}</p>`:""}</div></div>`;
+if(r.s)hydratePhotos(e)}
 function paintLog(){const l=$("#lg");if(!l)return;
 l.innerHTML=log.length?`<tr><th>Time</th><th>Student</th><th>Result</th></tr>`+log.slice(0,8).map(r=>`<tr><td>${r.time}</td><td>${r.name}</td><td>${r.title}</td></tr>`).join(""):`<tr><td>No scans yet. Scan a student to start.</td></tr>`}
 // ---------- Sign in (demo only: real accounts need server-side checks) ----------
@@ -737,7 +1066,7 @@ const ready=(DB.on?DB.load():Promise.all(students.map(async s=>{if(!s.claim_code
 setInterval(async()=>{if(!role)return;try{await DB.load()}catch{return}
 programs.forEach(p=>p.status=autoStatus(p));
 if(me)me=students.find(x=>x.id===me.id)||me;
-if(["dash","sdash","shist"].includes(page)||(page==="attend"&&!/INPUT|SELECT|TEXTAREA/.test((document.activeElement||{}).tagName||""))||(role==="checker"&&page==="scan"&&!$("#sp")))render()},5000);
+if(["sdash","shist"].includes(page)||(["dash","attend"].includes(page)&&!/INPUT|SELECT|TEXTAREA/.test((document.activeElement||{}).tagName||""))||(page==="scan"&&!$("#sp")))render()},5000);
 function logout(){role=null;me=null;closeMenu();const dl=$("#dlg");if(dl&&dl.open)dl.close();showForm("in");$("#lf").reset();err("");$("#app").classList.add("hide");$("#login").classList.remove("hide")}
 $("#lf").onsubmit=async e=>{e.preventDefault();await ready;const u=$("#lu").value.trim(),p=$("#lp").value;
 if(u.toLowerCase()==="admin"&&p==="admin123"){role="admin";me=null;page="dash"}
