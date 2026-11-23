@@ -52,7 +52,7 @@ h1, h2, h3 {
 /* ---------- App layout ---------- */
 .app {
   display: grid;
-  grid-template-columns: 230px 1fr;
+  grid-template-columns: 230px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -63,6 +63,7 @@ main {
 }
 
 main > h1 { font-size: 28px; margin-bottom: 4px; }
+main { min-width: 0; }
 
 .sub { color: var(--mute); margin: 0 0 20px; }
 
@@ -81,7 +82,7 @@ aside {
   padding: 4px 8px 16px;
   border-bottom: 1px solid rgba(220, 181, 124, 0.35);
 }
-.brand b { display: block; font: 700 18px 'Bricolage Grotesque'; }
+.brand b { display: block; font: 700 18px 'Bricolage Grotesque', sans-serif; }
 .brand span { font-size: 12px; color: var(--gold); }
 
 aside button {
@@ -120,7 +121,7 @@ aside button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px
 }
 
 .stat { padding: 14px; }
-.stat b { display: block; font: 700 28px 'Bricolage Grotesque'; color: var(--red); }
+.stat b { display: block; font: 700 28px 'Bricolage Grotesque', sans-serif; color: var(--red); }
 .stat span { color: var(--mute); font-size: 13px; }
 
 .panel { padding: 18px; margin-bottom: 18px; }
@@ -361,9 +362,40 @@ textarea { padding: 8px 10px; font: inherit; color: var(--ink); background: var(
 .by { margin: 0; font-size: 13px; color: var(--mute); }
 .back { display: inline-block; margin-bottom: 8px; font-size: 14px; }
 
+/* ---------- Photos, dashboard, clearance ---------- */
+.avatar { display: inline-grid; place-items: center; flex: 0 0 auto; width: 40px; height: 40px; overflow: hidden; background: var(--gold); border-radius: 50%; }
+.avatar svg, .avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.avatar.lg { width: 88px; height: 88px; }
+.avatar.xl { width: 112px; height: 112px; }
+.photo-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.photo-ctl p { margin: 6px 0 0; }
+.resrow { display: flex; align-items: center; gap: 18px; }
+.profhead { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-bottom: 12px; }
+.profhead h1 { margin: 0; }
+.profhead .btns { margin-left: auto; }
+.deskcard { display: flex; align-items: center; gap: 16px; margin-top: 14px; padding: 14px; border: 2px solid var(--gold); border-radius: 12px; }
+.deskcard h3 { font-size: 22px; }
+.statbtn { all: unset; display: block; box-sizing: border-box; padding: 14px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.statbtn b { display: block; font: 700 28px 'Bricolage Grotesque', sans-serif; color: var(--red); }
+.statbtn span { font-size: 13px; color: var(--mute); }
+.statbtn:hover { border-color: var(--gold); }
+.statbtn:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+.two2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.callout { border-width: 2px; }
+.callout small { font-size: 13px; color: var(--mute); }
+.callout h2 { margin: 4px 0 2px; }
+.callout p { margin: 0; }
+.callout.bad { border-color: var(--red); }
+.listrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.listrow:last-child { border-bottom: 0; }
+.rank .bar { min-width: 90px; margin-top: 4px; }
+ul.plain { margin: 0; padding-left: 20px; }
+.Excused { color: var(--plum); background: var(--white); border-color: var(--plum); }
+@media (max-width: 760px) { .two2 { grid-template-columns: 1fr; } .profhead .btns { margin-left: 0; } }
+
 /* ---------- Small screens ---------- */
 @media (max-width: 760px) {
-  .app { grid-template-columns: 1fr; }
+  .app { grid-template-columns: minmax(0, 1fr); }
   aside { flex-direction: row; flex-wrap: wrap; padding: 10px; }
   .brand { display: none; }
   .role { width: 100%; }
@@ -376,3 +408,5 @@ textarea { padding: 8px 10px; font: inherit; color: var(--ink); background: var(
 }
 
 aside #out { box-sizing: border-box; }
+
+.head { margin-bottom: 8px; }
