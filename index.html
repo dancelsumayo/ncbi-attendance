@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>NCBI Program Attendance</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- Login page: shown first. One card with four screens: sign in, activate, forgot password, save recovery code -->
+  <div id="login">
+    <div class="lbox">
+      <form id="lf" class="dform">
+        <h1>North Coast Bohol Institute</h1>
+        <p class="sub">Sign in to the program attendance system.</p>
+
+        <label>Student number or username
+          <input id="lu" autocomplete="username" required>
+        </label>
+
+        <label>Password
+          <input id="lp" type="password" autocomplete="current-password" required>
+        </label>
+
+        <p id="le" class="lerr" role="alert"></p>
+        <button class="btn" type="submit">Sign in</button>
+
+        <p class="switch">First time here? <button type="button" class="link" id="to-act">Activate your account</button></p>
+        <p class="switch">Forgot your password? <button type="button" class="link" id="to-forgot">Reset it yourself</button></p>
+
+        <details class="demo">
+          <summary>Demo accounts</summary>
+          <p>
+            Administrator: admin / admin123<br>
+            Lead officer: 2023-0157 / student123<br>
+            SBO officer: 2024-0090 / student123 (waits to be scanned in)<br>
+            Student: 2023-0142 / student123<br>
+            Try activation: 2025-0012, code R4MN-7K2P<br>
+            Try forgot password: 2023-0142, recovery code K7M2-9QXA-W4TB
+          </p>
+        </details>
+      </form>
+
+      <form id="af" class="dform hide">
+        <h1>Activate your account</h1>
+        <ol class="steps">
+          <li>Get your activation code from your class representative.</li>
+          <li>Enter your student number and the code below.</li>
+          <li>Choose your own password. You will use it every time you sign in.</li>
+        </ol>
+
+        <label>Student number
+          <input id="a-no" autocomplete="username" placeholder="e.g. 2026-0101">
+        </label>
+        <label>Activation code
+          <input id="a-code" autocomplete="off" autocapitalize="characters" placeholder="e.g. K7M2-9QXA">
+        </label>
+        <label>Choose a password (at least 6 characters)
+          <input id="a-pw" type="password" autocomplete="new-password">
+        </label>
+        <label>Type the password again
+          <input id="a-pw2" type="password" autocomplete="new-password">
+        </label>
+
+        <p id="a-err" class="lerr" role="alert"></p>
+        <button class="btn" type="submit">Activate and sign in</button>
+        <p class="switch"><button type="button" class="link" id="to-in">Back to sign in</button></p>
+      </form>
+
+      <form id="ff" class="dform hide">
+        <h1>Forgot your password?</h1>
+        <ol class="steps">
+          <li>Find the recovery code you saved when you activated your account.</li>
+          <li>Enter your student number and the recovery code below.</li>
+          <li>Choose a new password.</li>
+        </ol>
+
+        <label>Student number
+          <input id="f-no" autocomplete="username" placeholder="e.g. 2026-0101">
+        </label>
+        <label>Recovery code
+          <input id="f-code" autocomplete="off" autocapitalize="characters" placeholder="e.g. K7M2-9QXA-W4TB">
+        </label>
+        <label>New password (at least 6 characters)
+          <input id="f-pw" type="password" autocomplete="new-password">
+        </label>
+        <label>Type the new password again
+          <input id="f-pw2" type="password" autocomplete="new-password">
+        </label>
+
+        <p id="f-err" class="lerr" role="alert"></p>
+        <button class="btn" type="submit">Set new password</button>
+        <p class="hint">Lost your recovery code? As a last resort, ask the administrator for a new activation code.</p>
+        <p class="switch"><button type="button" class="link" id="to-in2">Back to sign in</button></p>
+      </form>
+
+      <div id="rc" class="dform hide"></div>
+    </div>
+  </div>
+
+  <!-- Main app: shown after sign in. Content is filled in by js/app.js -->
+  <div class="app hide" id="app">
+    <aside id="nav" aria-label="Main navigation"></aside>
+    <main id="view"></main>
+  </div>
+
+  <!-- QR code library (used for the student's QR code) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- Camera QR scanning -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+
+  <script src="js/config.js"></script>  <!-- database keys -->
+  <script src="js/db.js"></script>      <!-- talks to the database -->
+  <script src="js/app.js"></script>     <!-- screens and logic -->
+</body>
+</html>
