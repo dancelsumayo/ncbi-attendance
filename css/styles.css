@@ -69,6 +69,11 @@ main { min-width: 0; }
 
 /* ---------- Sidebar ---------- */
 aside {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -396,7 +401,7 @@ ul.plain { margin: 0; padding-left: 20px; }
 /* ---------- Small screens ---------- */
 @media (max-width: 760px) {
   .app { grid-template-columns: minmax(0, 1fr); }
-  aside { flex-direction: row; flex-wrap: wrap; padding: 10px; }
+  aside { position: static; height: auto; overflow: visible; flex-direction: row; flex-wrap: wrap; padding: 10px; }
   .brand { display: none; }
   .role { width: 100%; }
   main { padding: 18px 14px; }
@@ -410,3 +415,17 @@ ul.plain { margin: 0; padding-left: 20px; }
 aside #out { box-sizing: border-box; }
 
 .head { margin-bottom: 8px; }
+
+/* ---------- Pages for long lists, busy state ---------- */
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.pg-info { font-size: 13px; color: var(--mute); }
+.pg-nums { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pg-nums .btn { min-width: 38px; padding: 7px 10px; }
+.pg-n.on { color: var(--plum); background: var(--gold); }
+.pg-gap { color: var(--mute); }
+.pg-size { flex-direction: row; align-items: center; gap: 6px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled:hover { background: var(--red); }
+.btn.alt:disabled:hover { background: transparent; }
+body.busy, body.busy * { cursor: progress; }
+body.restoring #login { visibility: hidden; }
