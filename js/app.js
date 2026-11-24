@@ -98,7 +98,7 @@ $("#nav").innerHTML=`<div class="brand"><b>North Coast Bohol Institute</b><span>
 document.querySelectorAll("#nav [data-k]").forEach(b=>b.onclick=()=>{page=b.dataset.k;render()});
 $("#out").onclick=logout;
 }
-function render(){stopCam();camHandler=null;if(me&&me.must_change_pw)page="spw";nav();views[page]();}
+function render(){stopCam();camHandler=null;if(me&&me.must_change_pw)page="spw";nav();views[page]();saveSession()}
 
 // ---------- Admin views ----------
 const views={
@@ -171,11 +171,13 @@ paintLog();if(lastResult)showRes(lastResult);
 programs(){
 const canReopen=p=>p.status==="Completed"&&(p.type==="inout"||Date.now()<=atTime(p,p.end));
 const hint=p=>p.status==="Ongoing"&&p.type==="inout"?"Check-out open until "+closeLabel(p):p.status==="Completed"?(isManualClose(p)?"Closed by admin":p.type==="inout"?"Closed automatically":""):"";
+const sortedPrograms=[...programs].sort((a,b)=>b.date.localeCompare(a.date)),pgiP=pageInfo(sortedPrograms.length,pgPr),pageList=sortedPrograms.slice(pgiP.a,pgiP.a+pgPr.size);
 const actions=p=>p.status==="Upcoming"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-x="${p.id}">Cancel</button>`:p.status==="Ongoing"?`<button class="btn alt" data-e="${p.id}">Edit</button> <button class="btn alt" data-c="${p.id}">Close</button> <button class="btn alt" data-x="${p.id}">Cancel</button>`:p.status==="Completed"?`<button class="btn alt" data-e="${p.id}">Edit</button>${canReopen(p)?` <button class="btn alt" data-o="${p.id}">Reopen</button>`:""}`:"";
 $("#view").innerHTML=`<div class="head"><div><h1>Programs</h1><p class="sub">Set when attendance opens, when the program starts and ends, and how long students have to arrive on time.</p></div><button class="btn" id="new-pg">New program</button></div>
 <div class="panel"><div class="tablewrap"><table><tr><th>Program</th><th>Date</th><th>Attendance</th><th>Opens</th><th>Starts</th><th>Ends</th><th>On time until</th><th>Status</th><th><span class="sr">Actions</span></th></tr>
-${[...programs].sort((a,b)=>b.date.localeCompare(a.date)).map(p=>`<tr><td>${esc(p.name)}<br><small>${esc(termOf(p))}${p.counts===false?", <b>not for clearance</b>":""}</small></td><td>${p.date}</td><td>${p.type==="inout"?"Check-in and check-out":"Check-in only"}</td><td>${fmtTime(p.open)}</td><td>${fmtTime(p.start)}</td><td>${fmtTime(p.end)}</td><td>${fmtTime(p.lateAfter)}</td>
-<td>${tag(p.status)}${hint(p)?`<br><small>${hint(p)}</small>`:""}</td><td class="nowrap">${actions(p)}</td></tr>`).join("")}</table></div></div>`;
+${pageList.map(p=>`<tr><td>${esc(p.name)}<br><small>${esc(termOf(p))}${p.counts===false?", <b>not for clearance</b>":""}</small></td><td>${p.date}</td><td>${p.type==="inout"?"Check-in and check-out":"Check-in only"}</td><td>${fmtTime(p.open)}</td><td>${fmtTime(p.start)}</td><td>${fmtTime(p.end)}</td><td>${fmtTime(p.lateAfter)}</td>
+<td>${tag(p.status)}${hint(p)?`<br><small>${hint(p)}</small>`:""}</td><td class="nowrap">${actions(p)}</td></tr>`).join("")}</table></div><div id="pr-pg"></div></div>`;
+renderPager("pr-pg",sortedPrograms.length,pgPr,()=>views.programs(),[10,25,50]);
 $("#new-pg").onclick=()=>programDialog();
 const prog=b=>programs.find(x=>x.id==b.dataset.e||x.id==b.dataset.x||x.id==b.dataset.c||x.id==b.dataset.o);
 document.querySelectorAll("#view [data-e]").forEach(b=>b.onclick=()=>programDialog(prog(b)));
@@ -194,21 +196,22 @@ $("#view").innerHTML=`<div class="head"><div><h1>Students</h1><p class="sub" id=
 <label>Role<select id="fr"><option value="">All roles</option><option value="lead">Lead officers</option><option value="sbo">All SBO officers</option><option value="student">Students</option></select></label>
 <label>Show<select id="fs"><option value="current">Current students</option><option value="pending">Not activated yet</option><option value="inactive">Left school (inactive)</option><option value="">Everyone</option></select></label>
 <button class="btn alt" id="fx">Clear filters</button></div>
-<div class="tablewrap"><table id="st"></table></div></div>`;
+<div class="tablewrap"><table id="st"></table></div><div id="st-pg"></div></div>`;
 $("#q").value=fl.q;$("#fc").value=fl.course;$("#fy").value=fl.year;$("#fr").value=fl.role;$("#fs").value=fl.status;
 const draw=()=>{
 const q=fl.q.toLowerCase();
 const list=students.filter(x=>(x.name+" "+x.no+" "+(x.email||"")).toLowerCase().includes(q)&&(!fl.course||x.course===fl.course)&&(!fl.year||String(x.year)===fl.year)&&(!fl.role||(fl.role==="lead"?!!x.lead:(fl.role==="sbo")===!!x.checker))&&(!fl.status||(fl.status==="current"&&x.active)||(fl.status==="pending"&&x.active&&!x.pw)||(fl.status==="inactive"&&!x.active)));
 $("#cnt").textContent="Showing "+list.length+" of "+students.length+" students";
+syncPage(pgSt,JSON.stringify(fl));const pgi=pageInfo(list.length,pgSt),shown=list.slice(pgi.a,pgi.a+pgSt.size);
 const np=students.filter(x=>x.active&&!x.pw).length;
 $("#nudge").innerHTML=np?`<div class="notice">${np} of ${students.filter(x=>x.active).length} current students haven’t activated their account yet. <button class="link" id="nudge-go">Print their activation codes</button> for the class representatives.</div>`:"";
 $("#st").innerHTML=list.length?`<tr><th>Student</th><th>Course and year</th><th>Email</th><th>Role</th><th>Status</th><th><span class="sr">Actions</span></th></tr>`+
-list.map(x=>`<tr><td><button class="link" data-v="${x.id}">${x.name}</button><br><small>${x.no}</small></td><td>${x.course}, year ${x.year}</td><td>${x.email||"—"}</td>
+shown.map(x=>`<tr><td><button class="link" data-v="${x.id}">${x.name}</button><br><small>${x.no}</small></td><td>${x.course}, year ${x.year}</td><td>${x.email||"—"}</td>
 <td>${x.lead?`<span class="tag Completed">Lead officer</span>`:x.checker?`<span class="tag Present">SBO officer</span>`:"Student"}</td>
 <td>${!x.active?`<span class="tag Absent">Inactive</span>${x.inactive_reason?`<br><small>${x.inactive_reason}</small>`:""}`:x.pw?`<span class="tag Present">Active</span>`:`<span class="tag Late">Not activated</span><br><small>Code: ${x.claim_code||"none"}</small>`}</td>
 <td class="act"><button class="kebab" data-m="${x.id}" aria-haspopup="menu" aria-label="Actions for ${esc(x.name)}">${DOTS}</button></td></tr>`).join(""):`<tr><td colspan="6">No students match these filters.</td></tr>`;
 document.querySelectorAll("#st .kebab").forEach(b=>b.onclick=e=>{e.stopPropagation();openMenu(b,b.dataset.m)});
-document.querySelectorAll("#st .link").forEach(b=>b.onclick=()=>studentDialog(students.find(x=>x.id==b.dataset.v)));const ng=$("#nudge-go");if(ng)ng.onclick=printDialog};
+document.querySelectorAll("#st .link").forEach(b=>b.onclick=()=>studentDialog(students.find(x=>x.id==b.dataset.v)));renderPager("st-pg",list.length,pgSt,draw);const ng=$("#nudge-go");if(ng)ng.onclick=printDialog};
 $("#q").oninput=e=>{fl.q=e.target.value;draw()};
 $("#fc").onchange=e=>{fl.course=e.target.value;draw()};
 $("#fy").onchange=e=>{fl.year=e.target.value;draw()};
@@ -234,7 +237,7 @@ $("#view").innerHTML=`<div class="head"><div><h1>Clearance</h1><p class="sub">Sl
 <label>Status<select id="cl-s"><option value="">All</option><option>Clear</option><option>Missing slips</option><option>Penalty pending</option></select></label>
 <label>Sort by<select id="cl-o"><option value="name">Name A to Z</option><option value="missing">Most missing slips</option><option value="late">Most late</option></select></label>
 <button class="btn alt" id="cl-x">Clear filters</button><button class="btn alt" id="cl-print">Print list</button></div>
-<p class="sub" id="cl-count"></p><div class="tablewrap"><table id="cl-table"></table></div></div>`;
+<p class="sub" id="cl-count"></p><div class="tablewrap"><table id="cl-table"></table></div><div id="cl-pg"></div></div>`;
 $("#cl-t").value=term;$("#cl-q").value=cl.q;$("#cl-c").value=cl.course;$("#cl-y").value=cl.year;$("#cl-s").value=cl.status;$("#cl-o").value=cl.sort;
 camHandler=deskLookup;
 let shown=[];
@@ -246,10 +249,11 @@ list.sort(cmp);shown=list;
 const n=k=>all.filter(o=>o.r.status===k).length;
 $("#cl-sum").innerHTML=finals.length?`<span class="pill ok"><b>${n("Clear")}</b> clear</span><span class="pill late"><b>${n("Penalty pending")}</b> penalty pending</span><span class="pill absent"><b>${n("Missing slips")}</b> missing slips</span><span class="by" style="align-self:center">${finals.length} program${finals.length==1?"":"s"} count in this term</span>`:`<span class="by">No finished programs count toward clearance in this term yet.</span>`;
 $("#cl-count").textContent="Showing "+list.length+" of "+all.length+" students";
+syncPage(pgCl,JSON.stringify(cl));const pgi=pageInfo(list.length,pgCl),pageItems=list.slice(pgi.a,pgi.a+pgCl.size);
 $("#cl-table").innerHTML=list.length?`<tr><th>Student</th><th>Course and year</th><th>Slips</th><th>Late</th><th>Excused</th><th>Status</th><th>Missing</th></tr>`+
-list.map(o=>`<tr><td><button class="link" data-pf="${o.x.id}">${esc(o.x.name)}</button><br><small>${o.x.no}</small></td><td>${o.x.course}, year ${o.x.year}</td><td>${slipText(o.r)}</td><td>${o.r.late}</td><td>${o.r.excused}</td><td>${clearTag(o.r.status)}</td>
+pageItems.map(o=>`<tr><td><button class="link" data-pf="${o.x.id}">${esc(o.x.name)}</button><br><small>${o.x.no}</small></td><td>${o.x.course}, year ${o.x.year}</td><td>${slipText(o.r)}</td><td>${o.r.late}</td><td>${o.r.excused}</td><td>${clearTag(o.r.status)}</td>
 <td><small>${o.r.missing.length?o.r.missing.slice(0,2).map(m=>esc(m.p.name)+" ("+m.slip+")").join(", ")+(o.r.missing.length>2?" and "+(o.r.missing.length-2)+" more":""):"—"}</small></td></tr>`).join(""):`<tr><td>No students match these filters.</td></tr>`;
-document.querySelectorAll("#cl-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"clear"))};
+document.querySelectorAll("#cl-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"clear"));renderPager("cl-pg",list.length,pgCl,draw)};
 $("#cl-t").onchange=e=>{cl.term=e.target.value;render()};
 $("#cl-q").oninput=e=>{cl.q=e.target.value;draw()};
 $("#cl-c").onchange=e=>{cl.course=e.target.value;draw()};
@@ -269,22 +273,22 @@ $("#view").innerHTML=`<h1>History</h1><p class="sub">Every manual correction, ex
 <div class="panel"><div class="filters"><label class="grow">Search<input id="h-q" placeholder="Student, program, or reason"></label>
 <label>Type<select id="h-t"><option value="">All changes</option><option value="att">Attendance corrections</option><option value="pen">Penalties</option></select></label>
 <label>From<input type="date" id="h-from"></label><label>To<input type="date" id="h-to"></label><button class="btn alt" id="h-x">Clear</button></div>
-<p class="sub" id="h-count"></p><div class="tablewrap"><table id="h-table"></table></div><p><button class="btn alt hide" id="h-more">Show more</button></p></div>`;
+<p class="sub" id="h-count"></p><div class="tablewrap"><table id="h-table"></table></div><div id="h-pg"></div></div>`;
 $("#h-q").value=hf.q;$("#h-t").value=hf.type;$("#h-from").value=hf.from;$("#h-to").value=hf.to;
 const draw=()=>{
 const rows=changeLog.filter(e=>{const x=students.find(v=>v.id===e.student_id),p=programs.find(v=>v.id===e.program_id),d=e.at?new Date(e.at).toLocaleDateString("en-CA"):"";
 return matchScore(hf.q,[x&&x.name,x&&x.no,p&&p.name,e.action,e.old_value,e.new_value,e.reason].join(" "))>0&&(!hf.type||(hf.type==="pen")===/^Penalty/.test(e.action))&&(!hf.from||d>=hf.from)&&(!hf.to||d<=hf.to)}).sort((a,b)=>(b.at||"").localeCompare(a.at||""));
-$("#h-count").textContent="Showing "+Math.min(rows.length,hf.shown)+" of "+rows.length+" changes";
-$("#h-table").innerHTML=rows.length?`<tr><th>When</th><th>Student</th><th>Program</th><th>Change</th><th>Reason</th><th>By</th></tr>`+rows.slice(0,hf.shown).map(e=>{const x=students.find(v=>v.id===e.student_id),p=programs.find(v=>v.id===e.program_id);
+$("#h-count").textContent="Showing "+rows.length+" change"+(rows.length==1?"":"s");
+syncPage(pgHi,JSON.stringify([hf.q,hf.type,hf.from,hf.to]));const pgi=pageInfo(rows.length,pgHi);
+$("#h-table").innerHTML=rows.length?`<tr><th>When</th><th>Student</th><th>Program</th><th>Change</th><th>Reason</th><th>By</th></tr>`+rows.slice(pgi.a,pgi.a+pgHi.size).map(e=>{const x=students.find(v=>v.id===e.student_id),p=programs.find(v=>v.id===e.program_id);
 return `<tr><td class="nowrap">${e.at?new Date(e.at).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</td><td>${x?`<button class="link" data-pf="${x.id}">${esc(x.name)}</button>`:"—"}</td><td>${p?esc(p.name):"—"}</td>
 <td><b>${esc(e.action)}</b><br><small>${e.old_value?esc(e.old_value)+" → ":""}${esc(e.new_value||"")}</small></td><td>${esc(e.reason||"—")}</td><td>${esc(e.by_user||"—")}</td></tr>`}).join(""):`<tr><td>No changes match.</td></tr>`;
-$("#h-more").classList.toggle("hide",rows.length<=hf.shown);
+renderPager("h-pg",rows.length,pgHi,draw);
 document.querySelectorAll("#h-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"hist"))};
 $("#h-q").oninput=e=>{hf.q=e.target.value;hf.shown=25;draw()};
 $("#h-t").onchange=e=>{hf.type=e.target.value;hf.shown=25;draw()};
 $("#h-from").onchange=e=>{hf.from=e.target.value;draw()};
 $("#h-to").onchange=e=>{hf.to=e.target.value;draw()};
-$("#h-more").onclick=()=>{hf.shown+=25;draw()};
 $("#h-x").onclick=()=>{hf={q:"",type:"",from:"",to:"",shown:25};views.hist()};
 draw();
 DB.loadLog().then(()=>{if(page==="hist"&&$("#h-table"))draw()}).catch(()=>{});
@@ -326,19 +330,21 @@ $("#view").innerHTML=`<h1>Attendance</h1><p class="sub">Find a program, then ope
 <label>Status<select id="af-st"><option value="">All</option><option>Ongoing</option><option>Completed</option><option>Upcoming</option></select></label>
 <label>Sort by<select id="af-so"><option value="new">Newest first</option><option value="old">Oldest first</option><option value="az">Name A to Z</option><option value="za">Name Z to A</option></select></label>
 <button class="btn alt" id="af-x">Clear</button></div></div>
-<p class="sub" id="acount"></p><div id="alist"></div>`;
+<p class="sub" id="acount"></p><div id="alist"></div><div id="al-pg"></div>`;
 $("#aq").value=af.q;$("#af-from").value=af.from;$("#af-to").value=af.to;$("#af-st").value=af.status;$("#af-so").value=af.sort;
 const drawList=()=>{
 const list=programs.filter(p=>p.status!=="Cancelled"&&(!af.from||p.date>=af.from)&&(!af.to||p.date<=af.to)&&(!af.status||p.status===af.status)&&matchScore(af.q,hay(p))>0);
 const cmp={new:(a,b)=>b.date.localeCompare(a.date)||(b.start||"").localeCompare(a.start||""),old:(a,b)=>a.date.localeCompare(b.date)||(a.start||"").localeCompare(b.start||""),az:(a,b)=>a.name.localeCompare(b.name),za:(a,b)=>b.name.localeCompare(a.name)}[af.sort];
 list.sort(cmp);
-$("#acount").textContent="Showing "+Math.min(list.length,af.shown)+" of "+list.length+" programs";
-$("#alist").innerHTML=list.length?list.slice(0,af.shown).map(programCard).join("")+(list.length>af.shown?`<button class="btn alt" id="a-more">Show more programs</button>`:""):`<div class="panel">No programs match. Try fewer words, or check the spelling.</div>`;
+$("#acount").textContent="Showing "+list.length+" program"+(list.length==1?"":"s");
+syncPage(pgAl,JSON.stringify([af.q,af.from,af.to,af.status,af.sort]));const pgi=pageInfo(list.length,pgAl);
+$("#alist").innerHTML=list.length?list.slice(pgi.a,pgi.a+pgAl.size).map(programCard).join(""):`<div class="panel">No programs match. Try fewer words, or check the spelling.</div>`;
 document.querySelectorAll("#view [data-v]").forEach(b=>b.onclick=()=>{attProg=+b.dataset.v;ad={q:"",course:"",year:"",status:"",out:"",sort:"name"};render();window.scrollTo(0,0)});
-const more=$("#a-more");if(more)more.onclick=()=>{af.shown+=10;drawList()}};
+renderPager("al-pg",list.length,pgAl,drawList,[5,10,25])};
 // Suggestions that appear while typing (they allow small typos and partial words)
 let sug=[],act=-1;
-const closeSug=()=>{if(!$("#asug"))return;$("#asug").classList.add("hide");$("#aq").setAttribute("aria-expanded","false");$("#aq").removeAttribute("aria-activedescendant");act=-1};
+const sugBox=$("#asug"),sugIn=$("#aq");
+const closeSug=()=>{if(!sugBox.isConnected)return;sugBox.classList.add("hide");sugIn.setAttribute("aria-expanded","false");sugIn.removeAttribute("aria-activedescendant");act=-1};
 const drawSug=()=>{
 if(!af.q.trim())return closeSug();
 sug=programs.filter(p=>p.status!=="Cancelled").map(p=>({p,sc:matchScore(af.q,hay(p))})).filter(x=>x.sc>0).sort((a,b)=>b.sc-a.sc||b.p.date.localeCompare(a.p.date)).slice(0,6);
@@ -374,9 +380,9 @@ ${p.status==="Ongoing"?`<button class="btn ${p.paused?"":"alt"}" data-pz="${p.id
 ${officers.map(o=>{const mine=Object.values(recs).filter(r=>r.by===o.no),last=mine.map(r=>r.in).sort().pop(),out=(recs[o.id]||{}).out;
 const can=p.paused?"Paused":o.lead?(out?"No, scanned out":"Yes, lead officer"):isPresent(p.id,o.id)?"Yes, scanned in at "+recs[o.id].in:"Not yet, waiting to be scanned in";
 return `<tr><td>${o.name}${o.lead?` <span class="tag Completed">Lead</span>`:""}</td><td>${can}</td><td>${mine.length}</td><td>${last||"—"}</td></tr>`}).join("")||`<tr><td colspan="4">No SBO officers yet. Make one on the Students page.</td></tr>`}</table></div></div>`}).join("")||`<div class="panel">No upcoming or ongoing programs.</div>`);
-document.querySelectorAll("#view [data-pz]").forEach(b=>b.onclick=async()=>{const p=programs.find(x=>x.id==b.dataset.pz);
+document.querySelectorAll("#view [data-pz]").forEach(b=>b.onclick=()=>runOnce("pz:"+b.dataset.pz,async()=>{const p=programs.find(x=>x.id==b.dataset.pz);
 try{await DB.setProgram(p.id,{paused:!p.paused});p.paused=!p.paused;render();toast(p.paused?"Scanning is paused for "+p.name+".":"Scanning resumed for "+p.name+".")}
-catch(e){toast("Couldn’t change that. Check the internet connection and try again.")}});
+catch(e){toast("Couldn’t change that. Check the internet connection and try again.")}}));
 },
 // ---------- Student views ----------
 spw(){
@@ -389,7 +395,7 @@ $("#view").innerHTML=`<h1>Change password</h1>${me.must_change_pw?`<p class="not
 <div class="panel" style="max-width:420px"><h2>Recovery code</h2><p>${me.recovery_hash?"You have a recovery code. It lets you reset your own password if you forget it.":"You don’t have a recovery code yet. It lets you reset your own password if you forget it, without asking anyone."}</p>
 <button class="btn alt" id="rc-new">${me.recovery_hash?"Get a new recovery code":"Create my recovery code"}</button></div>`;
 $("#rc-new").onclick=recoveryDialog;
-$("#pw-save").onclick=async()=>{const m=t=>{$("#pw-msg").textContent=t};
+$("#pw-save").onclick=()=>runOnce("pw",async()=>{const m=t=>{$("#pw-msg").textContent=t};
 if(await hashPw(me.no,$("#pw0").value)!==me.pw)return m("Your current password is incorrect.");
 const n=$("#pw1").value;if(n.length<6)return m("Use at least 6 characters.");
 if(n===defaultPw(me))return m("Choose a password different from the default one.");
@@ -397,7 +403,7 @@ if(n!==$("#pw2").value)return m("The two new passwords don’t match.");
 try{const h=await hashPw(me.no,n),forced=me.must_change_pw;await DB.setStudent(me.id,{pw:h,must_change_pw:false});me.pw=h;me.must_change_pw=false;
 if(forced){page=role==="checker"?"scan":"sdash";return render()}
 ["#pw0","#pw1","#pw2"].forEach(i=>$(i).value="");m("Password changed. Use it the next time you sign in.")}
-catch(e){m("Couldn’t save the new password. Check the internet connection and try again.")}}
+catch(e){m("Couldn’t save the new password. Check the internet connection and try again.")}})
 },
 sdash(){
 const tl=termsList(),term=tl.includes(stTerm)?stTerm:currentTerm();stTerm=term;
@@ -480,7 +486,7 @@ $("#view").innerHTML=`<button class="link back" id="a-back">← All programs</bu
 ${io?`<label>Check-out<select id="d-o"><option value="">All</option><option value="out">Checked out</option><option value="noout">No check-out</option></select></label>`:""}
 <label>Sort by<select id="d-so"><option value="name">Name A to Z</option><option value="namez">Name Z to A</option><option value="in">Time in, earliest</option><option value="inz">Time in, latest</option><option value="late">Most late</option></select></label>
 <button class="btn alt" id="d-x">Clear filters</button></div>
-<p class="sub" id="d-count"></p><div class="tablewrap"><table id="d-table"></table></div></div>`;
+<p class="sub" id="d-count"></p><div class="tablewrap"><table id="d-table"></table></div><div id="d-pg"></div></div>`;
 $("#d-q").value=ad.q;$("#d-c").value=ad.course;$("#d-y").value=ad.year;$("#d-s").value=ad.status;if(io)$("#d-o").value=ad.out;$("#d-so").value=ad.sort;
 const draw=()=>{
 const R=x=>recs[x.id]||{},T=x=>R(x).in||"",L=x=>R(x).lateMin||0;
@@ -488,10 +494,11 @@ const rows=people.filter(x=>matchScore(ad.q,x.name+" "+x.no)>0&&(!ad.course||x.c
 const cmp={name:(a,b)=>a.name.localeCompare(b.name),namez:(a,b)=>b.name.localeCompare(a.name),in:(a,b)=>(T(a)||"99:99").localeCompare(T(b)||"99:99")||a.name.localeCompare(b.name),inz:(a,b)=>T(b).localeCompare(T(a))||a.name.localeCompare(b.name),late:(a,b)=>L(b)-L(a)||a.name.localeCompare(b.name)}[ad.sort];
 rows.sort(cmp);
 $("#d-count").textContent="Showing "+rows.length+" of "+people.length+" students";
+syncPage(pgDet,JSON.stringify([p.id,ad]));const pgi=pageInfo(rows.length,pgDet),pageRows=rows.slice(pgi.a,pgi.a+pgDet.size);
 $("#d-table").innerHTML=rows.length?`<tr><th>Student</th><th>Course and year</th><th>Time in</th>${io?"<th>Time out</th>":""}<th>Status</th><th>Late by</th><th>Scanned by</th><th><span class="sr">Actions</span></th></tr>`+
-rows.map(x=>{const r=R(x),s=st(x);return `<tr><td><button class="link" data-pf="${x.id}">${esc(x.name)}</button><br><small>${x.no}</small></td><td>${x.course}, year ${x.year}</td><td>${r.in||"—"}</td>${io?`<td>${r.out||(r.in&&p.status==="Completed"?"No check-out":"—")}</td>`:""}<td>${s==="none"?"Not yet scanned":tag(s)}</td><td>${r.status==="Late"&&r.lateMin>0?fmtDur(r.lateMin):"—"}</td><td>${r.by?esc(byName(r.by)):"—"}</td><td class="nowrap">${p.status==="Upcoming"?"":`<button class="btn alt" data-k="${x.id}">Correct</button>`}</td></tr>`}).join(""):`<tr><td>No students match these filters.</td></tr>`;
+pageRows.map(x=>{const r=R(x),s=st(x);return `<tr><td><button class="link" data-pf="${x.id}">${esc(x.name)}</button><br><small>${x.no}</small></td><td>${x.course}, year ${x.year}</td><td>${r.in||"—"}</td>${io?`<td>${r.out||(r.in&&p.status==="Completed"?"No check-out":"—")}</td>`:""}<td>${s==="none"?"Not yet scanned":tag(s)}</td><td>${r.status==="Late"&&r.lateMin>0?fmtDur(r.lateMin):"—"}</td><td>${r.by?esc(byName(r.by)):"—"}</td><td class="nowrap">${p.status==="Upcoming"?"":`<button class="btn alt" data-k="${x.id}">Correct</button>`}</td></tr>`}).join(""):`<tr><td>No students match these filters.</td></tr>`;
 document.querySelectorAll("#d-table [data-k]").forEach(b=>b.onclick=()=>correctDialog(p,students.find(v=>v.id==b.dataset.k),()=>attendDetail(p)));
-document.querySelectorAll("#d-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"attend"))};
+document.querySelectorAll("#d-table [data-pf]").forEach(b=>b.onclick=()=>openProfile(+b.dataset.pf,"attend"));renderPager("d-pg",rows.length,pgDet,draw)};
 $("#d-q").oninput=e=>{ad.q=e.target.value;draw()};
 $("#d-c").onchange=e=>{ad.course=e.target.value;draw()};
 $("#d-y").onchange=e=>{ad.year=e.target.value;draw()};
@@ -540,16 +547,30 @@ let dashTerm="",dashSort="rate",profId=null,profBack="dash",profTerm="",stTerm="
 function openProfile(id,back){profId=id;profBack=back||page;page="profile";render();window.scrollTo(0,0)}
 function afterStudentChange(){if(page==="students")views.students();else render()}
 
+// ---------- Protection against double clicks and slow connections ----------
+const locks=new Set();
+// Ignore a repeat of the same action while it is still running
+async function runOnce(key,fn){
+if(locks.has(key))return;locks.add(key);document.body.classList.add("busy");
+try{return await fn()}finally{locks.delete(key);if(!locks.size)document.body.classList.remove("busy")}}
+// Form submits run one at a time, and the button shows that something is happening
+function wrapSubmit(h){return async function(e){
+e.preventDefault();const f=e.currentTarget||this;
+if(f.dataset.sending)return;f.dataset.sending="1";
+const btn=e.submitter||f.querySelector("[type=submit]"),label=btn&&btn.textContent,busy=btn&&(btn.dataset.busy||"Saving…");
+if(btn){btn.disabled=true;btn.textContent=busy}
+try{return await h.call(f,e)}
+finally{delete f.dataset.sending;if(btn&&btn.isConnected){btn.disabled=false;if(btn.textContent===busy)btn.textContent=label}}}}
+
 // Suggestions that appear under a search box while typing
 function typeahead(input,list,items,onPick){
-let cur=[],act=-1;const li=list.slice(1);
-const close=()=>{const l=$(list),i=$(input);if(!l||!i)return;l.classList.add("hide");i.setAttribute("aria-expanded","false");i.removeAttribute("aria-activedescendant");act=-1};
-const draw=()=>{const l=$(list),i=$(input);if(!l||!i)return;cur=i.value.trim()?items(i.value).slice(0,6):[];if(!cur.length)return close();
+let cur=[],act=-1;const l=$(list),inp=$(input),li=list.slice(1);   // this exact pair of elements, even if the page changes later
+const close=()=>{if(!l.isConnected)return;l.classList.add("hide");inp.setAttribute("aria-expanded","false");inp.removeAttribute("aria-activedescendant");act=-1};
+const draw=()=>{if(!l.isConnected)return;cur=inp.value.trim()?items(inp.value).slice(0,6):[];if(!cur.length)return close();
 l.innerHTML=cur.map((x,n)=>`<li role="option" id="${li}-${n}" data-i="${n}" aria-selected="${n===act}">${esc(x.title)}<small>${esc(x.sub)}</small></li>`).join("");
-l.classList.remove("hide");i.setAttribute("aria-expanded","true");if(act>=0)i.setAttribute("aria-activedescendant",li+"-"+act);
+l.classList.remove("hide");inp.setAttribute("aria-expanded","true");if(act>=0)inp.setAttribute("aria-activedescendant",li+"-"+act);
 l.querySelectorAll("li").forEach(el=>el.onmousedown=e=>{e.preventDefault();pick(+el.dataset.i)})};
 const pick=n=>{const x=cur[n];if(!x)return;close();onPick(x)};
-const inp=$(input);
 inp.addEventListener("input",()=>{act=-1;draw()});
 inp.addEventListener("keydown",e=>{
 if(e.key==="ArrowDown"&&cur.length){e.preventDefault();act=(act+1)%cur.length;draw()}
@@ -594,10 +615,13 @@ const photoControl=(id,mine)=>`<div class="photo-ctl">${avatarHtml(id,"xl")}<div
 <p class="hint">Use a clear photo of ${mine?"your":"the student’s"} face. It is shrunk to a small square (256 pixels), so it takes very little space.</p><p class="err" id="ph-err" role="alert"></p></div></div>`;
 function bindPhoto(id){
 $("#ph-btn").onclick=()=>$("#ph-file").click();
-$("#ph-file").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
-const er=t=>{$("#ph-err").textContent=t};er("");
+$("#ph-file").onchange=e=>{const f=e.target.files[0];e.target.value="";if(f)runOnce("photo:"+id,()=>uploadPhoto(id,f))}}
+async function uploadPhoto(id,f){
+const er=t=>{const x=$("#ph-err");if(x)x.textContent=t};er("");
+const btn=$("#ph-btn"),was=btn&&btn.textContent;if(btn){btn.disabled=true;btn.textContent="Saving photo…"}
 try{const u=await processPhoto(f);await DB.setPhoto(id,u);photos[id]=u;document.querySelectorAll('[data-ph="'+id+'"]').forEach(el=>{el.innerHTML=`<img src="${u}" alt="">`});toast("Photo saved.")}
-catch(x){er(x.friendly?x.message:"Couldn’t save the photo. Check the internet connection and try again.")}}}
+catch(x){er(x.friendly?x.message:"Couldn’t save the photo. Check the internet connection and try again.")}
+finally{if(btn&&btn.isConnected){btn.disabled=false;btn.textContent=was}}}
 
 // ---------- History log, corrections, penalties ----------
 async function logChange(p,s,action,oldV,newV,reason){
@@ -666,7 +690,8 @@ try{const row=await DB.addPenalty({student_id:s.id,term,note,slips,settled:false
 await logChange(null,s,"Penalty recorded","",note+" ("+slips+" slip"+(slips==1?"":"s")+")","Term: "+term);
 d.close();toast("Penalty recorded.");if(after)after()}
 catch(er){$("#pn-err").textContent="Couldn’t save the penalty. Check the internet connection and try again."}}})}
-async function togglePenalty(pen,after){
+function togglePenalty(pen,after){return runOnce("pen:"+pen.id,()=>togglePenaltyRun(pen,after))}
+async function togglePenaltyRun(pen,after){
 const s=students.find(x=>x.id===pen.student_id),on=!pen.settled;
 try{await DB.setPenalty(pen.id,{settled:on,settled_at:on?new Date().toISOString():null});pen.settled=on;
 await logChange(null,s,on?"Penalty settled":"Penalty reopened","",pen.note,"Term: "+pen.term);
@@ -692,6 +717,23 @@ const g={};items.forEach(o=>{const k=o.x.course+", year "+o.x.year;(g[k]=g[k]||[
 printHtml(Object.keys(g).sort().map(k=>`<section class="sheet-sec"><h2>Clearance list: ${k}</h2><p>${esc(term)}</p>
 <table><tr><th>Student no.</th><th>Name</th><th>Slips</th><th>Missing</th><th>Status</th><th>Signature</th></tr>
 ${g[k].sort((a,b)=>a.x.name.localeCompare(b.x.name)).map(o=>`<tr><td>${o.x.no}</td><td>${esc(o.x.name)}</td><td>${slipText(o.r)}</td><td>${o.r.missing.length?o.r.missing.map(m=>esc(m.p.name)+" ("+m.slip+")").join(", "):"—"}</td><td>${o.r.status}</td><td></td></tr>`).join("")}</table></section>`).join(""))}
+
+// ---------- Pages for long lists ----------
+const PAGE_SIZES=[10,25,50,100];
+let pgSt={page:1,size:25},pgCl={page:1,size:25},pgDet={page:1,size:25},pgPr={page:1,size:10},pgHi={page:1,size:25},pgAl={page:1,size:10};
+// Go back to page 1 whenever the search or a filter changes
+function syncPage(st,sig){if(st.sig!==sig){st.sig=sig;st.page=1}}
+function pageInfo(total,st){const pages=Math.max(1,Math.ceil(total/st.size));st.page=Math.min(Math.max(1,st.page),pages);const a=(st.page-1)*st.size;return{pages,a,from:total?a+1:0,to:Math.min(total,a+st.size)}}
+function renderPager(id,total,st,redraw,sizes){
+const el=$("#"+id);if(!el)return;sizes=sizes||PAGE_SIZES;
+if(total<=Math.min(...sizes)){el.innerHTML="";return}
+const {pages,from,to}=pageInfo(total,st),nums=[];
+for(let n=1;n<=pages;n++)if(n===1||n===pages||Math.abs(n-st.page)<=1)nums.push(n);
+el.innerHTML=`<nav class="pager" aria-label="Pages"><span class="pg-info">Showing ${from} to ${to} of ${total}</span>
+<div class="pg-nums"><button type="button" class="btn alt" data-p="prev" ${st.page<=1?"disabled":""}>Previous</button>${nums.map((n,i)=>(i&&n-nums[i-1]>1?'<span class="pg-gap">…</span>':"")+`<button type="button" class="btn alt pg-n${n===st.page?" on":""}" data-p="${n}" aria-label="Page ${n}" ${n===st.page?'aria-current="page"':""}>${n}</button>`).join("")}<button type="button" class="btn alt" data-p="next" ${st.page>=pages?"disabled":""}>Next</button></div>
+<label class="pg-size">Rows<select>${sizes.map(z=>`<option ${z===st.size?"selected":""}>${z}</option>`).join("")}</select></label></nav>`;
+el.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const v=b.dataset.p;st.page=v==="prev"?st.page-1:v==="next"?st.page+1:+v;redraw();(el.closest(".panel")||el).scrollIntoView({block:"start"})});
+el.querySelector("select").onchange=e=>{st.size=+e.target.value;st.page=1;redraw()}}
 
 // ---------- Program details: validate, save, re-mark ----------
 let attProg=null;
@@ -805,7 +847,8 @@ e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>{e.h
 
 function dialog(html,mount){
 let d=$("#dlg");if(!d){d=document.createElement("dialog");d.id="dlg";document.body.appendChild(d);d.onclick=e=>{if(e.target===d)d.close()}}
-d.innerHTML=html;if(!d.open)d.showModal();if(mount)mount(d);return d}
+d.innerHTML=html;if(!d.open)d.showModal();if(mount)mount(d);
+d.querySelectorAll("form").forEach(f=>{if(typeof f.onsubmit==="function")f.onsubmit=wrapSubmit(f.onsubmit)});return d}
 
 // The "..." menu on each student row
 function openMenu(btn,id){
@@ -831,7 +874,8 @@ document.addEventListener("click",e=>{if(!e.target.closest("#rm"))closeMenu()});
 document.addEventListener("keydown",e=>{if(e.key==="Escape")closeMenu()});
 window.addEventListener("scroll",closeMenu,true);
 
-async function rowAction(a,x){
+function rowAction(a,x){return runOnce("row:"+a+":"+x.id,()=>rowActionRun(a,x))}
+async function rowActionRun(a,x){
 if(role!=="admin")return;
 const fail=()=>toast("Couldn’t save that change. Check the internet connection and try again.");
 if(a==="stats")return openProfile(x.id,"students");
@@ -967,7 +1011,8 @@ ${rows.length>50?`<p class="hint">Showing the first 50 of ${rows.length} rows.</
 <p class="err" id="i-err" role="alert"></p>
 <div class="dbtn"><button type="button" class="btn alt" id="i-back">Back</button><button type="button" class="btn" id="i-go" ${fresh.length?"":"disabled"}>Add ${fresh.length} student${fresh.length==1?"":"s"}</button></div></div>`;
 $("#i-back").onclick=importDialog;
-$("#i-go").onclick=async()=>{
+$("#i-go").onclick=()=>runOnce("import",async()=>{
+const go=$("#i-go"),was=go.textContent;go.disabled=true;go.textContent="Adding…";
 const tokens=new Set(students.map(x=>x.token)),codes=new Set();
 const list=fresh.map(r=>{let token;do{token="NCBI-"+Math.random().toString(16).slice(2,8).toUpperCase()}while(tokens.has(token));tokens.add(token);
 return{no:r.o.no,name:r.o.first+" "+r.o.last,first_name:r.o.first,last_name:r.o.last,course:r.o.course.toUpperCase(),year:r.y,email:r.o.email||null,token,active:true,checker:false,claim_code:newCode(codes)}});
@@ -975,7 +1020,7 @@ try{const added=await DB.addStudents(list);students.push(...added);lastCSV="";vi
 d.innerHTML=`<div class="dform"><h2>Done</h2><p>Added ${added.length} student${added.length==1?"":"s"}. Each one now needs an activation code to choose a password.</p>
 <div class="dbtn"><button type="button" class="btn alt" id="i-close">Close</button><button type="button" class="btn" id="i-print">Print activation codes</button></div></div>`;
 $("#i-close").onclick=()=>d.close();$("#i-print").onclick=printDialog}
-catch(e){$("#i-err").textContent="Couldn’t add the students. Check the internet connection and try again."}}}
+catch(e){go.disabled=false;go.textContent=was;$("#i-err").textContent="Couldn’t add the students. Check the internet connection and try again."}})}
 
 // ---------- Printable activation sheets (one per class) ----------
 function printDialog(){
@@ -1007,7 +1052,9 @@ printHtml(Object.keys(groups).sort().map(g=>`<section class="sheet-sec"><h2>${g}
 ${groups[g].sort((a,b)=>a.name.localeCompare(b.name)).map(x=>`<tr><td>${x.no}</td><td>${x.name}</td><td><b>${x.claim_code||"none"}</b></td><td>${x.pw?"Activated":`<span class="box"></span>`}</td></tr>`).join("")}</table></section>`).join(""))}
 
 // ---------- Scan logic ----------
-async function doScan(token){
+function doScan(token){return runOnce("scan:"+String(token||"").trim().toUpperCase(),()=>doScanRun(token))}
+async function doScanRun(token){
+touch();
 if(!token)return;
 const p=programs.find(x=>x.id==$("#sp").value),s=students.find(x=>x.token===token.toUpperCase()||(role==="admin"&&x.no===token)),t=now();
 const mode=p&&p.type==="inout"?scanMode:"in";   // check-in only programs always check in
@@ -1037,7 +1084,8 @@ if(navigator.vibrate)navigator.vibrate(r.cls=="bad"?[80,60,80]:60);
 
 // ---------- Camera scanner ----------
 let cam=null,camHandler=null,lastCode="",lastAt=0;
-async function toggleCam(){
+function toggleCam(){return runOnce("cam",toggleCamRun)}
+async function toggleCamRun(){
 if(cam)return stopCam();
 if(!window.Html5Qrcode)return alert("The camera library didn’t load. Check the internet connection.");
 $("#reader").classList.remove("hide");
@@ -1061,13 +1109,35 @@ function paintLog(){const l=$("#lg");if(!l)return;
 l.innerHTML=log.length?`<tr><th>Time</th><th>Student</th><th>Result</th></tr>`+log.slice(0,8).map(r=>`<tr><td>${r.time}</td><td>${r.name}</td><td>${r.title}</td></tr>`).join(""):`<tr><td>No scans yet. Scan a student to start.</td></tr>`}
 // ---------- Sign in (demo only: real accounts need server-side checks) ----------
 const err=m=>{$("#le").textContent=m};
+// ---------- Staying signed in (this tab only) ----------
+// The sign-in is kept in this browser tab, so a refresh doesn't sign you out. It ends when you sign out,
+// close the tab, or leave the page untouched for an hour.
+const SESSION_KEY="ncbi-session",IDLE_MINUTES=60;
+let lastActive=Date.now();
+const store={get(){try{return JSON.parse(sessionStorage.getItem(SESSION_KEY)||"null")}catch(e){return null}},
+set(v){try{v?sessionStorage.setItem(SESSION_KEY,JSON.stringify(v)):sessionStorage.removeItem(SESSION_KEY)}catch(e){}}};
+function saveSession(){if(!role)return;store.set({role,id:me?me.id:null,page:page==="profile"?profBack:page,t:lastActive})}
+function touch(){if(Date.now()-lastActive<5000)return;lastActive=Date.now();const x=store.get();if(x){x.t=lastActive;store.set(x)}}
+["click","keydown","touchstart"].forEach(ev=>document.addEventListener(ev,touch,{passive:true}));
+function restoreSession(){
+document.body.classList.remove("restoring");
+const x=store.get();if(!x)return;
+if(Date.now()-x.t>IDLE_MINUTES*60000){store.set(null);return}
+if(x.role==="admin"){role="admin";me=null}
+else{const v=students.find(y=>y.id===x.id);if(!v||!v.active||!v.pw){store.set(null);return}me=v;role=v.checker?"checker":"student"}
+page=(menus[role]||[]).some(m=>m[0]===x.page)?x.page:role==="admin"?"dash":role==="checker"?"scan":"sdash";
+lastActive=x.t;
+$("#login").classList.add("hide");$("#app").classList.remove("hide");render()}
+setInterval(()=>{if(role&&Date.now()-lastActive>IDLE_MINUTES*60000){logout();err("You were signed out after "+IDLE_MINUTES+" minutes without activity.")}},30000);
+if(store.get()){document.body.classList.add("restoring");setTimeout(()=>document.body.classList.remove("restoring"),5000)}
 const ready=(DB.on?DB.load():Promise.all(students.map(async s=>{if(!s.claim_code)s.pw=await hashPw(s.no,"student123");if(s.no==="2023-0142")s.recovery_hash=await hashPw(s.no,"K7M29QXAW4TB")}))).catch(()=>err("Can’t reach the database. Check js/config.js."));
+ready.then(restoreSession);
 // Pull in changes made on other devices (only redraw screens with nothing to type into)
 setInterval(async()=>{if(!role)return;try{await DB.load()}catch{return}
 programs.forEach(p=>p.status=autoStatus(p));
 if(me)me=students.find(x=>x.id===me.id)||me;
 if(["sdash","shist"].includes(page)||(["dash","attend"].includes(page)&&!/INPUT|SELECT|TEXTAREA/.test((document.activeElement||{}).tagName||""))||(page==="scan"&&!$("#sp")))render()},5000);
-function logout(){role=null;me=null;closeMenu();const dl=$("#dlg");if(dl&&dl.open)dl.close();showForm("in");$("#lf").reset();err("");$("#app").classList.add("hide");$("#login").classList.remove("hide")}
+function logout(){role=null;me=null;store.set(null);closeMenu();const dl=$("#dlg");if(dl&&dl.open)dl.close();showForm("in");$("#lf").reset();err("");$("#app").classList.add("hide");$("#login").classList.remove("hide")}
 $("#lf").onsubmit=async e=>{e.preventDefault();await ready;const u=$("#lu").value.trim(),p=$("#lp").value;
 if(u.toLowerCase()==="admin"&&p==="admin123"){role="admin";me=null;page="dash"}
 else{const s=students.find(x=>x.no===u);
@@ -1162,3 +1232,6 @@ try{const rc=newRecovery(),h=await hashPw(x.no,pw),rh=await hashPw(x.no,clean(rc
 await DB.setStudent(x.id,{pw:h,recovery_hash:rh});x.pw=h;x.recovery_hash=rh;
 const l=merge(x);$("#ff").reset();showRecovery(l,rc)}
 catch(er){ferr("Couldn’t save your new password. Try again.")}};
+
+// Sign-in, activation and forgot-password forms: one submit at a time
+["#lf","#af","#ff"].forEach(sel=>{const f=$(sel);f.onsubmit=wrapSubmit(f.onsubmit)});
